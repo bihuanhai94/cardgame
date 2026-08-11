@@ -4,7 +4,7 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "vitest run",
+    "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
     "typecheck": "tsc -b"
   },
   "devDependencies": {

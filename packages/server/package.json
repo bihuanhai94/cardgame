@@ -1,0 +1,18 @@
+{
+  "name": "@cardgame/server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-sqlite --experimental-strip-types src/main.ts",
+    "start": "node --experimental-sqlite dist/main.js"
+  },
+  "dependencies": {
+    "@cardgame/shared": "workspace:*",
+    "fastify": "^5.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "@types/node": "^22.10.0"
+  }
+}

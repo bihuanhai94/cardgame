@@ -8,4 +8,11 @@ export default defineWorkspace([
       environment: 'node',
     },
   },
+  {
+    test: {
+      name: 'server',
+      root: './packages/server',
+      environment: 'node',
+    },
+  },
 ])
