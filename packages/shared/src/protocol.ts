@@ -3,11 +3,12 @@ export type ClientMessage =
   | { t: 'join'; roomId: string }
   | { t: 'leave' }
   | { t: 'action'; action: unknown }
+  | { t: 'start' }
   | { t: 'ping' }
 
 export type ServerMessage =
   | { t: 'authOk'; userId: string }
-  | { t: 'roomState'; roomId: string; seats: SeatInfo[]; started: boolean }
+  | { t: 'roomState'; roomId: string; ownerId: string; seats: SeatInfo[]; started: boolean }
   | { t: 'gameView'; view: unknown }
   | { t: 'events'; events: { type: string; payload?: unknown }[] }
   | { t: 'settled'; deltas: Record<string, number> }

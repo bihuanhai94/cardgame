@@ -61,7 +61,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
       if (user) room.setNickname(user.id, user.nickname)
       ctx.roomId = room.id
       const out: ServerMessage[] = [
-        { t: 'roomState', roomId: room.id, seats: room.seatInfos(), started: room.isStarted() },
+        { t: 'roomState', roomId: room.id, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
       ]
       if (room.isStarted()) out.push({ t: 'gameView', view: room.viewFor(ctx.userId) })
       return out
@@ -72,7 +72,23 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
         ctx.rooms.get(ctx.roomId)?.leave(ctx.userId)
         ctx.roomId = null
       }
-      return [{ t: 'roomState', roomId: '', seats: [], started: false }]
+      return [{ t: 'roomState', roomId: '', ownerId: '', seats: [], started: false }]
+    }
+
+    case 'start': {
+      if (!ctx.roomId) return [err('NOT_IN_ROOM', '你不在任何房间中')]
+      const room = ctx.rooms.get(ctx.roomId)
+      if (!room) return [err('ROOM_NOT_FOUND', '房间不存在')]
+      if (room.ownerId !== ctx.userId) return [err('NOT_OWNER', '只有房主可以开局')]
+      try {
+        room.start()
+      } catch (e) {
+        return [err('START_FAILED', (e as Error).message)]
+      }
+      return [
+        { t: 'roomState', roomId: room.id, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
+        { t: 'gameView', view: room.viewFor(ctx.userId) },
+      ]
     }
 
     case 'action': {
@@ -120,7 +136,7 @@ export function attachGateway(
       // 每个连接单独裁剪，绝不复用他人视图
       sock.send(JSON.stringify({ t: 'gameView', view: room.viewFor(c.userId) }))
       sock.send(JSON.stringify({
-        t: 'roomState', roomId, seats: room.seatInfos(), started: room.isStarted(),
+        t: 'roomState', roomId, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted(),
       }))
     }
   }

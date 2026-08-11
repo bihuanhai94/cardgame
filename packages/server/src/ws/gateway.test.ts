@@ -123,6 +123,95 @@ describe('加入房间', () => {
   })
 })
 
+describe('开局', () => {
+  let lastDb: ReturnType<typeof boot>['db']
+  let lastRooms: ReturnType<typeof boot>['rooms']
+  let lastMk: ReturnType<typeof boot>['mk']
+
+  function authed() {
+    const { db, rooms, mk } = boot()
+    lastDb = db
+    lastRooms = rooms
+    lastMk = mk
+    const a = mk('甲')
+    const b = mk('乙')
+    const room = rooms.create({ gameId: 'highcard', ownerId: a.user.id, seats: 3, options: { ante: 100 } })
+    const ca = ctx(db, rooms)
+    const cb = ctx(db, rooms)
+    handleMessage(ca, JSON.stringify({ t: 'auth', token: a.token }))
+    handleMessage(cb, JSON.stringify({ t: 'auth', token: b.token }))
+    return { db, rooms, room, ca, cb, a, b }
+  }
+
+  /** 复用上一次 authed() 产生的 db/rooms，让第三名玩家加入同一房间 */
+  function authed2(room: { id: string }) {
+    const c = lastMk('丙')
+    const cc = ctx(lastDb, lastRooms)
+    handleMessage(cc, JSON.stringify({ t: 'auth', token: c.token }))
+    handleMessage(cc, JSON.stringify({ t: 'join', roomId: room.id }))
+    return { cb: cc, c }
+  }
+
+  function twoJoined() {
+    const { db, rooms, room, ca, cb, a, b } = authed()
+    handleMessage(ca, JSON.stringify({ t: 'join', roomId: room.id }))
+    handleMessage(cb, JSON.stringify({ t: 'join', roomId: room.id }))
+    return { db, rooms, room, ca, cb, a, b }
+  }
+
+  function oneJoined() {
+    const { db, rooms, room, ca, a } = authed()
+    handleMessage(ca, JSON.stringify({ t: 'join', roomId: room.id }))
+    return { db, rooms, room, ca, a }
+  }
+
+  function authedNoRoom() {
+    const { db, rooms, mk } = boot()
+    const a = mk('甲')
+    const ca = ctx(db, rooms)
+    handleMessage(ca, JSON.stringify({ t: 'auth', token: a.token }))
+    return { db, rooms, ca, a }
+  }
+
+  it('房主可以开局', () => {
+    const { room, ca } = authed()
+    handleMessage(ca, JSON.stringify({ t: 'join', roomId: room.id }))
+    const { cb } = authed2(room)
+    void cb
+    const out = handleMessage(ca, JSON.stringify({ t: 'start' }))
+    expect(out.some((m) => m.t === 'gameView')).toBe(true)
+    expect(room.isStarted()).toBe(true)
+  })
+
+  it('非房主开局被拒绝', () => {
+    const { room, ca, cb } = twoJoined()
+    void ca
+    expect(handleMessage(cb, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'NOT_OWNER' })
+    expect(room.isStarted()).toBe(false)
+  })
+
+  it('人数不足时返回 START_FAILED', () => {
+    const { room, ca } = oneJoined()
+    expect(handleMessage(ca, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'START_FAILED' })
+    expect(room.isStarted()).toBe(false)
+  })
+
+  it('重复开局返回 START_FAILED', () => {
+    const { ca } = twoJoined()
+    handleMessage(ca, JSON.stringify({ t: 'start' }))
+    expect(handleMessage(ca, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'START_FAILED' })
+  })
+
+  it('未加入房间时开局被拒绝', () => {
+    const { ca } = authedNoRoom()
+    expect(handleMessage(ca, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'NOT_IN_ROOM' })
+  })
+})
+
 describe('对局动作', () => {
   function playing() {
     const { db, rooms, mk } = boot()

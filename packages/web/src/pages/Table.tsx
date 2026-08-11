@@ -12,8 +12,9 @@ interface HighCardView {
 }
 
 export function Table({ onLeave }: { onLeave: () => void }) {
-  const { view, seats, roomId, act, error, lastSettlement, user } = useStore()
+  const { view, seats, roomId, ownerId, started, act, startGame, error, lastSettlement, user } = useStore()
   const v = view as HighCardView | null
+  const isOwner = user !== null && user.id === ownerId
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-3 p-4">
@@ -29,6 +30,12 @@ export function Table({ onLeave }: { onLeave: () => void }) {
           </span>
         ))}
       </div>
+
+      {!started && isOwner && (
+        <button className="rounded bg-green-600 px-4 py-2 text-white" onClick={startGame}>
+          开始本局
+        </button>
+      )}
 
       {v === null ? (
         <p className="text-slate-500">等待开局……</p>

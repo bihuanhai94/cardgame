@@ -22,6 +22,8 @@ interface State {
   user: User | null
   netWorth: NetWorth | null
   roomId: string | null
+  ownerId: string | null
+  started: boolean
   seats: SeatInfo[]
   view: unknown
   lastSettlement: Record<string, number> | null
@@ -36,6 +38,7 @@ interface State {
   connect(): void
   joinRoom(roomId: string): void
   act(action: unknown): void
+  startGame(): void
 }
 
 const api = new ApiClient('')
@@ -58,6 +61,8 @@ export const useStore = create<State>((set, get) => ({
   user: null,
   netWorth: null,
   roomId: null,
+  ownerId: null,
+  started: false,
   seats: [],
   view: null,
   lastSettlement: null,
@@ -65,7 +70,7 @@ export const useStore = create<State>((set, get) => ({
 
   reset() {
     set({
-      user: null, netWorth: null, roomId: null, seats: [],
+      user: null, netWorth: null, roomId: null, ownerId: null, started: false, seats: [],
       view: null, lastSettlement: null, error: null,
     })
   },
@@ -76,7 +81,13 @@ export const useStore = create<State>((set, get) => ({
         set({ view: msg.view, error: null })
         break
       case 'roomState':
-        set({ roomId: msg.roomId || null, seats: msg.seats, error: null })
+        set({
+          roomId: msg.roomId || null,
+          ownerId: msg.ownerId || null,
+          started: msg.started,
+          seats: msg.seats,
+          error: null,
+        })
         break
       case 'settled':
         set({ lastSettlement: msg.deltas })
@@ -143,5 +154,9 @@ export const useStore = create<State>((set, get) => ({
 
   act(action) {
     get().socket?.send({ t: 'action', action })
+  },
+
+  startGame() {
+    get().socket?.send({ t: 'start' })
   },
 }))
