@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { mintTo } from './ledger.js'
+import { mintTo, withTransaction } from './ledger.js'
 
 export const DAILY_GRANT = 200
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000
@@ -20,9 +20,13 @@ export function claimDaily(
     .get(userId, day)
   if (exists) return { claimed: false, amount: 0 }
 
-  db.prepare('INSERT INTO daily_claims (user_id, day, amount) VALUES (?,?,?)')
-    .run(userId, day, DAILY_GRANT)
-  mintTo(db, userId, DAILY_GRANT, 'daily_grant', day)
+  // 签到记录与铸币必须原子：否则崩溃窗口会让用户被标记为「今日已领」
+  // 却没拿到钱，且没有任何补救路径。
+  withTransaction(db, () => {
+    db.prepare('INSERT INTO daily_claims (user_id, day, amount) VALUES (?,?,?)')
+      .run(userId, day, DAILY_GRANT)
+    mintTo(db, userId, DAILY_GRANT, 'daily_grant', day)
+  })
   return { claimed: true, amount: DAILY_GRANT }
 }
 

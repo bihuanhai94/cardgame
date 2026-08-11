@@ -3,7 +3,7 @@ import { openTestDb } from '../db/open.js'
 import { createInviteCode, registerUser, INITIAL_GRANT } from './users.js'
 import { sendFriendRequest, acceptFriendRequest } from './friends.js'
 import { createLoan, LOAN_COOLDOWN_MS } from './loans.js'
-import { getBalance, userAccount } from './ledger.js'
+import { getBalance, userAccount, checkGlobalInvariant } from './ledger.js'
 import { claimDaily, ranking, dayKey, DAILY_GRANT } from './ranking.js'
 
 const OLD = Date.now() + LOAN_COOLDOWN_MS + 1000
@@ -84,5 +84,37 @@ describe('ranking', () => {
   it('limit 生效', () => {
     const { db } = setup()
     expect(ranking(db, 1)).toHaveLength(1)
+  })
+})
+
+describe('transaction atomicity', () => {
+  it('claimDaily 的签到记录与铸币必须原子', () => {
+    const { db, a } = setup()
+    const balanceBefore = getBalance(db, userAccount(a.id))
+    const now = Date.now()
+
+    // 让每日补给过账在签到记录写入之后失败
+    db.exec(`CREATE TRIGGER fail_daily_mint BEFORE INSERT ON ledger_entries
+             WHEN NEW.reason = 'daily_grant'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+
+    try {
+      expect(() => claimDaily(db, a.id, now)).toThrow()
+    } finally {
+      db.exec('DROP TRIGGER fail_daily_mint')
+    }
+
+    // 关键断言：签到记录必须因事务回滚而消失（不原子则它会留下）
+    const claimed = db
+      .prepare('SELECT 1 AS ok FROM daily_claims WHERE user_id = ? AND day = ?')
+      .get(a.id, dayKey(now))
+    expect(claimed).toBeUndefined()
+    expect(getBalance(db, userAccount(a.id))).toBe(balanceBefore)
+    expect(checkGlobalInvariant(db).ok).toBe(true)
+
+    // 同日重试应该成功，不应被标记为「已领」
+    const r = claimDaily(db, a.id, now)
+    expect(r).toEqual({ claimed: true, amount: DAILY_GRANT })
+    expect(getBalance(db, userAccount(a.id))).toBe(balanceBefore + DAILY_GRANT)
   })
 })
