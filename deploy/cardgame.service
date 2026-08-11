@@ -1,0 +1,32 @@
+[Unit]
+Description=Cardgame Server
+After=network.target
+
+[Service]
+Type=simple
+User=cardgame
+Group=cardgame
+WorkingDirectory=/opt/cardgame/app
+Environment=NODE_ENV=production
+Environment=CARDGAME_DB=/opt/cardgame/data/cardgame.db
+Environment=PORT=3100
+Environment=HOST=127.0.0.1
+ExecStart=/opt/cardgame/node/bin/node --experimental-sqlite packages/server/dist/main.js
+Restart=on-failure
+RestartSec=5
+
+# 资源上限：保证最坏情况下只有本服务被 OOM kill，不波及 agent-hub
+MemoryMax=1G
+CPUQuota=80%
+
+# 最小权限
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/cardgame/data /opt/cardgame/logs
+
+StandardOutput=append:/opt/cardgame/logs/out.log
+StandardError=append:/opt/cardgame/logs/err.log
+
+[Install]
+WantedBy=multi-user.target
