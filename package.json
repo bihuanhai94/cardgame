@@ -5,7 +5,8 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "fuzz": "node --experimental-sqlite --experimental-strip-types packages/server/src/testing/run-fuzz.ts"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
