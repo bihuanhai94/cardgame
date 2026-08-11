@@ -16,6 +16,9 @@ class FakeWs {
   send(data: string) { this.sent.push(data) }
   close() { this.readyState = 3; this.onclose?.() }
   open() { this.readyState = 1; this.onopen?.() }
+  // 进入 CLOSING（真实 WebSocket 在 close() 被调用后、onclose 触发前会经过此状态），
+  // 不触发 onclose —— 用于复现 authed 仍为 true 但已不可写的窗口期。
+  beginClosing() { this.readyState = 2 }
   emit(msg: ServerMessage) { this.onmessage?.({ data: JSON.stringify(msg) }) }
 }
 
@@ -106,6 +109,30 @@ describe('GameSocket', () => {
     fresh.open()
     fresh.emit({ t: 'authOk', userId: 'u1' })
     const types = fresh.sent.map((x) => JSON.parse(x).t)
+    expect(types).toEqual(['auth', 'join', 'action'])
+    vi.useRealTimers()
+  })
+
+  it('CLOSING 窗口期（onclose 尚未触发、authed 仍为 true）发送的消息不能被丢弃，应入队并在重连后送达', async () => {
+    vi.useFakeTimers()
+    const { s, last } = make()
+    last().open()
+    last().emit({ t: 'authOk', userId: 'u1' })
+    s.send({ t: 'join', roomId: '654321' })
+    const dying = last()
+    dying.beginClosing() // readyState = 2，onclose 尚未触发，authed 仍为 true
+    s.send({ t: 'action', action: { type: 'call' } })
+    // 消息不应被写入这个（正在关闭的）socket
+    expect(dying.sent.some((x) => JSON.parse(x).t === 'action')).toBe(false)
+
+    // 随后真正关闭并重连
+    dying.close()
+    await vi.advanceTimersByTimeAsync(1000)
+    const fresh = last()
+    fresh.open()
+    fresh.emit({ t: 'authOk', userId: 'u1' })
+    const types = fresh.sent.map((x) => JSON.parse(x).t)
+    // 消息必须在新连接上送达，且晚于补发的 join
     expect(types).toEqual(['auth', 'join', 'action'])
     vi.useRealTimers()
   })

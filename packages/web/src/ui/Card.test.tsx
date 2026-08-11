@@ -37,9 +37,13 @@ describe('CardView', () => {
     expect(container.textContent).toContain('王')
   })
 
-  it('小王（rank 15）同样显示王字', () => {
-    const { container } = render(<CardView card={{ suit: 'j', rank: 15 }} />)
-    expect(container.textContent).toContain('王')
+  it('小王（rank 15）显示王字且为黑色，与大王（红色）区分', () => {
+    const { container: small } = render(<CardView card={{ suit: 'j', rank: 15 }} />)
+    expect(small.textContent).toContain('王')
+    expect(small.innerHTML).not.toContain('#dc2626')
+
+    const { container: big } = render(<CardView card={{ suit: 'j', rank: 16 }} />)
+    expect(big.innerHTML).toContain('#dc2626')
   })
 
   it('card 为 null 时渲染牌背且不含任何点数', () => {

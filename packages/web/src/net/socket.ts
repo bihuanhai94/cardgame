@@ -66,10 +66,14 @@ export class GameSocket {
     }
   }
 
+  private canSendNow(): boolean {
+    return this.authed && this.ws?.readyState === 1
+  }
+
   send(msg: ClientMessage): void {
     if (msg.t === 'join') this.currentRoomId = msg.roomId
     if (msg.t === 'leave') this.currentRoomId = null
-    if (this.authed && this.ws) {
+    if (this.canSendNow()) {
       this.rawSend(msg)
     } else {
       this.queue.push(msg)
