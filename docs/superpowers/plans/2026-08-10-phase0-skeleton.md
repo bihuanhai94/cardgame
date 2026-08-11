@@ -5967,6 +5967,157 @@ git commit -m "chore: 部署脚本与文档"
 
 ---
 
+### Task 18: 开局入口（计划补漏）
+
+**背景：** Task 16 的端到端验证暴露出 `Room.start()` 在生产代码中没有任何调用点 —— HTTP 路由表与 WebSocket 协议都没有开局入口，导致房间能建、人能进、但牌局永远无法开始。0 期完成标准第 5 条要求「完成一局 highcard」，因此这是计划自身的缺口，需补齐。
+
+**Files:**
+- Modify: `packages/shared/src/protocol.ts`（`ClientMessage` 增加 `start`）
+- Modify: `packages/server/src/room/room.ts`（`Room` 暴露 `ownerId` 供网关校验）
+- Modify: `packages/server/src/ws/gateway.ts`（处理 `start` 消息）
+- Modify: `packages/web/src/pages/Table.tsx`（房主可见「开始本局」按钮）
+- Modify: `packages/web/src/store.ts`（`startGame()` 动作）
+- Test: `packages/server/src/ws/gateway.test.ts`
+
+**Interfaces:**
+- Consumes: Task 11 的 `Room.start()`、`Room.ownerId`、`Room.players()`；Task 14 的 `handleMessage` 与广播机制
+- Produces:
+  - `ClientMessage` 新增 `{ t: 'start' }`
+  - 网关处理：仅房主可开局；非房主返回 `NOT_OWNER`；人数不足或已开局时把 `Room.start()` 抛出的错误转成 `START_FAILED`
+  - 开局成功后向房间内每个连接下发各自裁剪的 `gameView` 与 `roomState`
+  - `useStore().startGame()` 发送 `{ t: 'start' }`
+
+- [ ] **Step 1: 写失败测试**
+
+在 `packages/server/src/ws/gateway.test.ts` 的 `describe('对局动作')` 之前新增：
+
+```ts
+describe('开局', () => {
+  it('房主可以开局', () => {
+    const { room, ca } = authed()
+    handleMessage(ca, JSON.stringify({ t: 'join', roomId: room.id }))
+    const { cb } = authed2(room)
+    void cb
+    const out = handleMessage(ca, JSON.stringify({ t: 'start' }))
+    expect(out.some((m) => m.t === 'gameView')).toBe(true)
+    expect(room.isStarted()).toBe(true)
+  })
+
+  it('非房主开局被拒绝', () => {
+    const { room, ca, cb } = twoJoined()
+    void ca
+    expect(handleMessage(cb, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'NOT_OWNER' })
+    expect(room.isStarted()).toBe(false)
+  })
+
+  it('人数不足时返回 START_FAILED', () => {
+    const { room, ca } = oneJoined()
+    expect(handleMessage(ca, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'START_FAILED' })
+    expect(room.isStarted()).toBe(false)
+  })
+
+  it('重复开局返回 START_FAILED', () => {
+    const { ca } = twoJoined()
+    handleMessage(ca, JSON.stringify({ t: 'start' }))
+    expect(handleMessage(ca, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'START_FAILED' })
+  })
+
+  it('未加入房间时开局被拒绝', () => {
+    const { ca } = authedNoRoom()
+    expect(handleMessage(ca, JSON.stringify({ t: 'start' }))[0])
+      .toMatchObject({ t: 'error', code: 'NOT_IN_ROOM' })
+  })
+})
+```
+
+沿用该测试文件中已有的辅助函数命名习惯来实现 `authed2` / `twoJoined` / `oneJoined` / `authedNoRoom`；若已有等价辅助函数则直接复用，不要重复造。
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `pnpm test`
+Expected: FAIL，`start` 消息落到 `UNKNOWN_TYPE` 分支。
+
+- [ ] **Step 3: 协议增加 start**
+
+`packages/shared/src/protocol.ts` 的 `ClientMessage` 增加一项：
+
+```ts
+  | { t: 'start' }
+```
+
+- [ ] **Step 4: Room 暴露 ownerId**
+
+`packages/server/src/room/room.ts` 中 `ownerId` 已是 `readonly` 公开字段，确认其可从网关读取即可；若不是，改为 `readonly ownerId: string`。
+
+- [ ] **Step 5: 网关处理 start**
+
+在 `handleMessage` 的 `switch` 中，`action` 分支之前加入：
+
+```ts
+    case 'start': {
+      if (!ctx.roomId) return [err('NOT_IN_ROOM', '你不在任何房间中')]
+      const room = ctx.rooms.get(ctx.roomId)
+      if (!room) return [err('ROOM_NOT_FOUND', '房间不存在')]
+      if (room.ownerId !== ctx.userId) return [err('NOT_OWNER', '只有房主可以开局')]
+      try {
+        room.start()
+      } catch (e) {
+        return [err('START_FAILED', (e as Error).message)]
+      }
+      return [
+        { t: 'roomState', roomId: room.id, seats: room.seatInfos(), started: room.isStarted() },
+        { t: 'gameView', view: room.viewFor(ctx.userId) },
+      ]
+    }
+```
+
+开局后其余在场连接由 `attachGateway` 既有的 `broadcast` 逻辑各自收到裁剪视图，无需额外处理。
+
+- [ ] **Step 6: 运行测试确认通过**
+
+Run: `pnpm test`
+Expected: PASS。
+
+- [ ] **Step 7: 前端接入**
+
+`packages/web/src/store.ts` 增加动作：
+
+```ts
+  startGame() {
+    get().socket?.send({ t: 'start' })
+  },
+```
+
+并在 `State` 接口中声明 `startGame(): void`。
+
+`packages/web/src/pages/Table.tsx` 在座位区下方，仅当本局未开始且当前用户是房主时渲染按钮：
+
+```tsx
+      {!started && isOwner && (
+        <button className="rounded bg-green-600 px-4 py-2 text-white" onClick={startGame}>
+          开始本局
+        </button>
+      )}
+```
+
+房主判定所需的 `ownerId` 通过 `roomState` 下发 —— 若 `ServerMessage` 的 `roomState` 尚未包含该字段，在 `protocol.ts` 中为其增加 `ownerId: string`，网关下发时一并带上，store 存入并供页面使用。
+
+- [ ] **Step 8: 端到端复验**
+
+用 curl + WebSocket 脚本走通：两个账号注册 → 房主建房 → 双方加入 → 房主发 `start` → 双方各自 `call` → 断言收到 `settled`、两人净资产之和守恒。报告真实输出。
+
+- [ ] **Step 9: 提交**
+
+```bash
+git add -A
+git commit -m "feat: 补上开局入口（房主开局）"
+```
+
+---
+
 ## 完成标准
 
 0 期视为完成，需同时满足：
