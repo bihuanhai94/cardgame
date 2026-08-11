@@ -89,6 +89,16 @@ if [[ -d "${APP_ROOT}/app/node_modules/.bin" ]] && find "${APP_ROOT}/app/node_mo
   echo "         Investigate before starting the service; this box cannot compile native addons." >&2
 fi
 
+echo "==> Step: link workspace package @cardgame/shared into node_modules"
+# The release tarball ships packages/server/dist and packages/shared/dist side by
+# side (see README Step 1), but packages/server/dist/room/room.js imports
+# '@cardgame/shared' at runtime as a package, not a relative path. npm install
+# above only fetches fastify/ws — it does not know about this in-repo workspace
+# package, so without this symlink node fails with ERR_MODULE_NOT_FOUND /
+# "Cannot find package '@cardgame/shared'" the moment the service starts.
+mkdir -p "${APP_ROOT}/app/node_modules/@cardgame"
+ln -sfn "${APP_ROOT}/app/packages/shared" "${APP_ROOT}/app/node_modules/@cardgame/shared"
+
 echo "==> Step: fix ownership"
 chown -R cardgame:cardgame "${APP_ROOT}"
 

@@ -79,7 +79,10 @@ ssh root@119.29.198.188 'bash /tmp/install.sh'
 `install.sh` 会做（且只做）：创建 `cardgame` 系统用户、建好
 `/opt/cardgame/{app,data,node,logs}` 目录、把验证过的 Node 挪进
 `/opt/cardgame/node`、解压发布包到 `/opt/cardgame/app`、用该 Node 自带的 npm 只装
-`fastify@5 ws@8` 生产依赖（纯 JS，无编译）、安装并启动 systemd 服务。它**不会**碰
+`fastify@5 ws@8` 生产依赖（纯 JS，无编译）、**把 `packages/shared` 链接进
+`node_modules/@cardgame/shared`**（`packages/server/dist` 在运行时以包名而非相对路径
+导入 `@cardgame/shared`，`npm install` 不知道这个 workspace 内部包，缺这个软链接
+服务会在启动瞬间报 `ERR_MODULE_NOT_FOUND`）、安装并启动 systemd 服务。它**不会**碰
 nginx——那是下面 Step 3 单独手工做的事。
 
 **验证服务已启动且没有影响 agent-hub：**
@@ -103,7 +106,10 @@ ssh root@119.29.198.188 'pgrep -f agent-hub/hub.py'
 
 ## Step 3：接入 nginx —— 全部署中唯一触碰共享资源的步骤
 
-`deploy/cardgame.nginx.conf` 放到服务器的 `/usr/local/nginx/conf/` 下。
+`deploy/cardgame.nginx.conf` 放到服务器的 `/usr/local/nginx/conf/` 下。该文件现在包含
+两个 `server` 块：一个 `listen 80` 的纯跳转块（`return 301 https://$host$request_uri;`），
+一个 `listen 443 ssl` 的正式服务块。没有前者，用户直接输入不带 `https://` 的域名会落到
+80 端口上其它 server 块（`agent-hub` / `console_site`）手里，得到一个无关服务的响应。
 
 **执行顺序不可调换，每一步做完再做下一步：**
 
@@ -261,6 +267,7 @@ ssh root@119.29.198.188 '/opt/cardgame/node/bin/node --experimental-sqlite -e "c
 | 现象 | 先看哪里 |
 |---|---|
 | 服务起不来 | `journalctl -u cardgame -n 50`，`/opt/cardgame/logs/err.log` |
+| `ERR_MODULE_NOT_FOUND` / `Cannot find package '@cardgame/shared'` | 原因：`node_modules/@cardgame/shared` 软链接缺失（`install.sh` 未跑到那一步，或手工解压过 tarball 绕过了 `install.sh`）。修复：`mkdir -p /opt/cardgame/app/node_modules/@cardgame && ln -sfn /opt/cardgame/app/packages/shared /opt/cardgame/app/node_modules/@cardgame/shared`，然后 `systemctl restart cardgame` |
 | 502 / 连不上 `/api` | `systemctl is-active cardgame`；确认监听在 `127.0.0.1:3100` |
 | WebSocket 断线 | nginx `/ws` location 的 `proxy_read_timeout` 是否还是 3600s；nginx error log |
 | 内存被限制 OOM | `systemctl status cardgame` 里的 `MemoryMax` 相关退出码；先看是不是本服务把自己的 1G 用满，agent-hub 不受影响 |
