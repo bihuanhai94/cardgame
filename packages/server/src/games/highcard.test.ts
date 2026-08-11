@@ -55,13 +55,13 @@ describe('highCard 动作', () => {
 
   it('拒绝非行动方的动作', () => {
     const s = highCard.init(ctx)
-    expect(() => highCard.apply(s, 'zzz', { type: 'call' })).toThrow(/不在本局/)
+    expect(() => highCard.apply(s, 'zzz', { type: 'call' })).toThrow(/非法动作/)
   })
 
   it('拒绝重复行动', () => {
     let s = highCard.init(ctx)
     s = highCard.apply(s, 'a', { type: 'call' }).state
-    expect(() => highCard.apply(s, 'a', { type: 'call' })).toThrow(/已经行动/)
+    expect(() => highCard.apply(s, 'a', { type: 'call' })).toThrow(/非法动作/)
   })
 })
 
@@ -138,6 +138,41 @@ describe('highCard 视图裁剪', () => {
     const json = JSON.stringify(highCard.view(s, 'a'))
     const bCard = JSON.stringify(s.hands['b'])
     expect(json.includes(bCard)).toBe(false)
+  })
+})
+
+describe('isLegal', () => {
+  const ctx = { seed: 42, players: ['a', 'b', 'c'], options: { ante: 100 } }
+
+  it('在局且未行动的玩家可以跟注与弃牌', () => {
+    const s = highCard.init(ctx)
+    expect(highCard.isLegal(s, 'a', { type: 'call' })).toBe(true)
+    expect(highCard.isLegal(s, 'a', { type: 'fold' })).toBe(true)
+  })
+
+  it('拒绝未知动作类型', () => {
+    const s = highCard.init(ctx)
+    expect(highCard.isLegal(s, 'a', { type: '__illegal__' } as never)).toBe(false)
+  })
+
+  it('拒绝不在本局的玩家', () => {
+    const s = highCard.init(ctx)
+    expect(highCard.isLegal(s, 'zzz', { type: 'call' })).toBe(false)
+  })
+
+  it('拒绝已行动的玩家', () => {
+    let s = highCard.init(ctx)
+    s = highCard.apply(s, 'a', { type: 'call' }).state
+    expect(highCard.isLegal(s, 'a', { type: 'call' })).toBe(false)
+  })
+
+  it('与 legalActions 一致：legalActions 给出的每个动作都必须 isLegal', () => {
+    const s = highCard.init(ctx)
+    for (const p of ctx.players) {
+      for (const a of highCard.legalActions(s, p)) {
+        expect(highCard.isLegal(s, p, a)).toBe(true)
+      }
+    }
   })
 })
 

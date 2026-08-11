@@ -29,6 +29,7 @@ describe('fuzzEngine', () => {
       id: 'broken-sum',
       init: () => ({ done: false }),
       legalActions: (s) => (s.done ? [] : [{ type: 'go' }]),
+      isLegal: (s) => !s.done,
       apply: () => ({ state: { done: true }, events: [] }),
       isOver: (s) => s.done,
       settle: () => ({ deltas: { a: 100, b: 0 } }),
@@ -42,6 +43,7 @@ describe('fuzzEngine', () => {
       id: 'broken-deadlock-no-mover',
       init: () => ({ n: 0 }),
       legalActions: () => [],
+      isLegal: () => false,
       apply: (s) => ({ state: s, events: [] }),
       isOver: () => false,
       settle: () => ({ deltas: {} }),
@@ -58,6 +60,7 @@ describe('fuzzEngine', () => {
       id: 'broken-deadlock-step-budget',
       init: () => ({ n: 0 }),
       legalActions: () => [{ type: 'go' }],
+      isLegal: () => true,
       apply: (s) => {
         step++
         return { state: { n: s.n + 1 }, events: [] }
@@ -74,6 +77,7 @@ describe('fuzzEngine', () => {
       id: 'broken-illegal',
       init: () => ({ n: 0 }),
       legalActions: () => [{ type: 'only' }],
+      isLegal: (_s, _p, a) => a.type === 'only',
       apply: (s) => ({ state: { n: s.n + 1 }, events: [] }),
       isOver: (s) => s.n >= 1,
       settle: () => ({ deltas: {} }),
@@ -89,6 +93,7 @@ describe('fuzzEngine', () => {
       id: 'broken-leak',
       init: () => ({ secret: 'SECRET-b', done: false }),
       legalActions: (s) => (s.done ? [] : [{ type: 'go' }]),
+      isLegal: (s) => !s.done,
       apply: (s) => ({ state: { ...s, done: true }, events: [] }),
       isOver: (s) => s.done,
       settle: () => ({ deltas: { a: 0, b: 0 } }),

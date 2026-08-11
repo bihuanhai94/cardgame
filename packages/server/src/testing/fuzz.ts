@@ -53,14 +53,16 @@ export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResu
 
       if (opts.probeIllegal) {
         const illegal = { type: '__illegal__' } as unknown as A
-        let rejected = false
-        try {
-          engine.apply(state, actor, illegal)
-        } catch {
-          rejected = true
-        }
-        if (!rejected) {
-          throw new Error(`第 ${round} 局接受了非法动作`)
+        if (!engine.isLegal(state, actor, illegal)) {
+          let rejected = false
+          try {
+            engine.apply(state, actor, illegal)
+          } catch {
+            rejected = true
+          }
+          if (!rejected) {
+            throw new Error(`第 ${round} 局接受了非法动作`)
+          }
         }
       }
 

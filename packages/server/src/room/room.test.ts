@@ -167,6 +167,21 @@ describe('Room 行动与视图', () => {
   })
 })
 
+describe('Room.act 的动作校验', () => {
+  it('接受键序不同但语义相同的动作', () => {
+    const room = makeRoom()
+    room.sit('a'); room.sit('b'); room.start()
+    // 客户端 JSON 反序列化后键序可能不同，不能因此拒绝
+    expect(() => room.act('a', { type: 'call', extra: undefined } as never)).not.toThrow()
+  })
+
+  it('拒绝引擎判定为非法的动作', () => {
+    const room = makeRoom()
+    room.sit('a'); room.sit('b'); room.start()
+    expect(() => room.act('a', { type: '__illegal__' })).toThrow(/非法动作/)
+  })
+})
+
 describe('settleToLedger', () => {
   function setupDb() {
     const db = openTestDb()

@@ -12,6 +12,8 @@ const counter: Engine<CounterState, CounterAction> = {
     over: false,
   }),
   legalActions: () => [{ type: 'add', n: 1 }, { type: 'stop' }],
+  isLegal: (state, _playerId, action) =>
+    !state.over && (action.type === 'add' || action.type === 'stop'),
   apply: (state, playerId, action) => {
     if (action.type === 'stop') {
       return { state: { ...state, over: true }, events: [{ type: 'stopped' }] }

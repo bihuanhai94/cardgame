@@ -27,6 +27,14 @@ export interface Engine<S, A> {
   readonly id: string
   init(ctx: EngineContext): S
   legalActions(state: S, playerId: string): A[]
+  /**
+   * 校验一个动作在当前状态下是否合法。
+   *
+   * 必须用校验而非比对 legalActions 的枚举结果：参数化动作（加注额、
+   * 比牌目标）无法穷举，且客户端反序列化后的对象键序不保证一致。
+   * 不变量：legalActions 返回的每个动作都必须使本函数返回 true。
+   */
+  isLegal(state: S, playerId: string, action: A): boolean
   apply(state: S, playerId: string, action: A): ApplyResult<S>
   isOver(state: S): boolean
   settle(state: S): Settlement

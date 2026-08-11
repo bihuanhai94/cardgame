@@ -50,13 +50,15 @@ export const highCard: Engine<HighCardState, HighCardAction> = {
     return [{ type: 'call' }, { type: 'fold' }]
   },
 
-  apply(state, playerId, action) {
-    if (!state.players.includes(playerId)) throw new Error('该玩家不在本局中')
-    if (state.acted.includes(playerId)) throw new Error('该玩家本轮已经行动过')
+  isLegal(state, playerId, action) {
+    if (!state.players.includes(playerId)) return false
+    if (state.folded.includes(playerId) || state.acted.includes(playerId)) return false
+    return action?.type === 'call' || action?.type === 'fold'
+  },
 
-    const legal = highCard.legalActions(state, playerId)
-    if (!legal.some((a) => a.type === action.type)) {
-      throw new Error(`非法动作：${(action as { type: unknown }).type as string}`)
+  apply(state, playerId, action) {
+    if (!highCard.isLegal(state, playerId, action)) {
+      throw new Error(`非法动作：${(action as { type?: string })?.type ?? '未知'}`)
     }
 
     if (action.type === 'fold') {
