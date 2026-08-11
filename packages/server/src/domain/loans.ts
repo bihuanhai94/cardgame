@@ -85,7 +85,7 @@ export function createLoan(
   })
 
   return toLoan(
-    db.prepare('SELECT * FROM loans WHERE id = ?').get(id) as LoanRow,
+    db.prepare('SELECT * FROM loans WHERE id = ?').get(id) as unknown as LoanRow,
   )
 }
 
@@ -95,7 +95,7 @@ export function repayLoan(
   actingUser: string,
   amount: number,
 ): Loan {
-  const row = db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId) as LoanRow | undefined
+  const row = db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId) as unknown as LoanRow | undefined
   if (!row) throw new Error('借条不存在')
   if (row.borrower !== actingUser) throw new Error('无权操作该借条')
   if (row.status === 'settled') throw new Error('该借条已结清')
@@ -123,7 +123,7 @@ export function repayLoan(
     )
   })
 
-  return toLoan(db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId) as LoanRow)
+  return toLoan(db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId) as unknown as LoanRow)
 }
 
 export function listLoans(
@@ -131,10 +131,10 @@ export function listLoans(
   userId: string,
 ): { asLender: Loan[]; asBorrower: Loan[] } {
   const asLender = (
-    db.prepare('SELECT * FROM loans WHERE lender = ? ORDER BY created_at DESC').all(userId) as LoanRow[]
+    db.prepare('SELECT * FROM loans WHERE lender = ? ORDER BY created_at DESC').all(userId) as unknown as LoanRow[]
   ).map(toLoan)
   const asBorrower = (
-    db.prepare('SELECT * FROM loans WHERE borrower = ? ORDER BY created_at DESC').all(userId) as LoanRow[]
+    db.prepare('SELECT * FROM loans WHERE borrower = ? ORDER BY created_at DESC').all(userId) as unknown as LoanRow[]
   ).map(toLoan)
   return { asLender, asBorrower }
 }
@@ -166,7 +166,7 @@ export function netWorth(
 export function autoRepay(db: DatabaseSync, userId: string): number {
   const loans = db
     .prepare("SELECT * FROM loans WHERE borrower = ? AND status = 'open' ORDER BY created_at ASC")
-    .all(userId) as LoanRow[]
+    .all(userId) as unknown as LoanRow[]
   let paidTotal = 0
   for (const loan of loans) {
     const available = getBalance(db, userAccount(userId))

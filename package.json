@@ -6,7 +6,7 @@
   "scripts": {
     "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
     "typecheck": "tsc -b",
-    "fuzz": "tsc -b || true ; node --experimental-sqlite packages/server/dist/testing/run-fuzz.js"
+    "fuzz": "tsc -b && node --experimental-sqlite packages/server/dist/testing/run-fuzz.js"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
