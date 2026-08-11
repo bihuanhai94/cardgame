@@ -1,7 +1,8 @@
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from './sqlite.js'
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
 import { MIGRATIONS } from './migrations.js'
 
-export function applyMigrations(db: DatabaseSync): void {
+export function applyMigrations(db: DatabaseSyncType): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -24,7 +25,7 @@ export function applyMigrations(db: DatabaseSync): void {
   }
 }
 
-export function openDb(path: string): DatabaseSync {
+export function openDb(path: string): DatabaseSyncType {
   const db = new DatabaseSync(path)
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA foreign_keys = ON')
@@ -32,7 +33,7 @@ export function openDb(path: string): DatabaseSync {
   return db
 }
 
-export function openTestDb(): DatabaseSync {
+export function openTestDb(): DatabaseSyncType {
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   applyMigrations(db)
