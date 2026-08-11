@@ -39,7 +39,7 @@ export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResu
 
     let steps = 0
     while (!engine.isOver(state)) {
-      if (steps++ > maxSteps) {
+      if (steps++ >= maxSteps) {
         throw new Error(`第 ${round} 局死锁：超过 ${maxSteps} 步仍未结束`)
       }
 
@@ -80,6 +80,17 @@ export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResu
     }
 
     assertZeroSum(engine.settle(state))
+
+    // Check for view leaks in terminal state (settlement view not checked in loop)
+    if (opts.secretProbe && opts.secretOwner) {
+      for (const viewer of [...opts.players, null]) {
+        if (viewer === opts.secretOwner) continue
+        const json = JSON.stringify(engine.view(state, viewer))
+        if (json.includes(opts.secretProbe)) {
+          throw new Error(`第 ${round} 局视图泄漏：${viewer ?? '观战者'} 看到了他人信息`)
+        }
+      }
+    }
   }
 
   return { rounds: opts.rounds, actions: actionCount }

@@ -27,9 +27,9 @@ describe('fuzzEngine', () => {
     expect(() => fuzzEngine(broken, { rounds: 1, players: ['a', 'b'] })).toThrow(/零和/)
   })
 
-  it('检测出死锁的引擎', () => {
+  it('检测出无人有合法动作的死锁', () => {
     const stuck: Engine<{ n: number }, { type: 'go' }> = {
-      id: 'broken-deadlock',
+      id: 'broken-deadlock-no-mover',
       init: () => ({ n: 0 }),
       legalActions: () => [],
       apply: (s) => ({ state: s, events: [] }),
@@ -37,7 +37,26 @@ describe('fuzzEngine', () => {
       settle: () => ({ deltas: {} }),
       view: (s) => s,
     }
-    expect(() => fuzzEngine(stuck, { rounds: 1, players: ['a', 'b'] })).toThrow(/死锁/)
+    expect(() => fuzzEngine(stuck, { rounds: 1, players: ['a', 'b'], maxSteps: 1_000_000 })).toThrow(
+      /无人有合法动作/,
+    )
+  })
+
+  it('检测出超过步数限制的死锁', () => {
+    let step = 0
+    const busy: Engine<{ n: number }, { type: 'go' }> = {
+      id: 'broken-deadlock-step-budget',
+      init: () => ({ n: 0 }),
+      legalActions: () => [{ type: 'go' }],
+      apply: (s) => {
+        step++
+        return { state: { n: s.n + 1 }, events: [] }
+      },
+      isOver: () => false,
+      settle: () => ({ deltas: {} }),
+      view: (s) => s,
+    }
+    expect(() => fuzzEngine(busy, { rounds: 1, players: ['a'], maxSteps: 10 })).toThrow(/超过/)
   })
 
   it('检测出接受非法动作的引擎', () => {

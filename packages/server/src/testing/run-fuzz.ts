@@ -1,5 +1,5 @@
-import { highCard } from '../../dist/games/highcard.js'
-import { fuzzEngine } from '../../dist/testing/fuzz.js'
+import { highCard } from '../games/highcard.js'
+import { fuzzEngine } from './fuzz.js'
 
 const rounds = Number(process.argv[2] ?? 100000)
 const started = Date.now()
