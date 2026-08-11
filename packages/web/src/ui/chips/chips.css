@@ -1,0 +1,93 @@
+/* ── 单枚筹码：俯视的扁椭圆 + 侧壁厚度 ─────────────────
+   关键：元素本身永远不旋转（旋转压扁的椭圆会让它"立起来"），
+   只让表面的条纹图案绕中心转，用 --spin 控制。            */
+.chip3d {
+  position: absolute;
+  left: 0;
+  width: var(--cw);
+  height: calc(var(--cw) * 0.30);
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse 58% 58% at 50% 45%, var(--face) 0 68%, transparent 69%),
+    repeating-conic-gradient(from calc(8deg + var(--spin, 0deg)) at 50% 50%,
+      var(--edge) 0deg 14deg, var(--face) 14deg 31deg);
+  box-shadow:
+    0 1px 0 var(--wall),
+    0 2px 0 var(--wall),
+    0 3px 0 var(--wallD),
+    0 4px 0 var(--wallD),
+    0 5px 4px rgba(0,0,0,.5);
+  outline: 1px solid rgba(0,0,0,.28);
+  outline-offset: -1px;
+}
+.chip3d::after {
+  content: "";
+  position: absolute; inset: 12% 16% 34% 16%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,.30), rgba(255,255,255,0));
+  pointer-events: none;
+}
+
+.d5    { --face:#b5322c; --edge:#f6ece9; --wall:#8e241f; --wallD:#671812; }
+.d25   { --face:#2f6fae; --edge:#eaf2fa; --wall:#245685; --wallD:#193d61; }
+.d100  { --face:#1f8a4c; --edge:#ecf8f0; --wall:#166b3a; --wallD:#0e4c28; }
+.d500  { --face:#33383d; --edge:#e9ebed; --wall:#22262a; --wallD:#131619; }
+.d1000 { --face:#71408a; --edge:#f3eaf7; --wall:#57306a; --wallD:#3c1f4a; }
+
+/* ── 码成摞（玩家自己的筹码） ───────────────────────── */
+.col { position: relative; display: inline-block; vertical-align: bottom; }
+.col::after {
+  content: "";
+  position: absolute; left: 4%; right: 4%; bottom: -3px; height: 6px;
+  border-radius: 50%;
+  background: rgba(0,0,0,.4);
+  filter: blur(3px);
+}
+.pile { display: flex; align-items: flex-end; gap: 3px; }
+
+@keyframes drop {
+  0%   { transform: translateY(-26px) scaleY(.82); opacity: 0; }
+  60%  { transform: translateY(2px)   scaleY(1.06); opacity: 1; }
+  80%  { transform: translateY(-1px)  scaleY(.98); }
+  100% { transform: translateY(0)     scaleY(1); }
+}
+.chip3d.new { animation: drop .34s cubic-bezier(.3,.9,.4,1.2) backwards; }
+
+/* ── 乱堆（底池）─────────────────────────────────────
+   容器尺寸固定，筹码相对容器中心定位，
+   所以金额变化时堆只在原地变密变高，位置不会漂移。      */
+.heap { position: relative; }
+.heap::after {
+  content: "";
+  position: absolute; left: 50%; top: 50%;
+  width: var(--hw, 130px); height: calc(var(--hw, 130px) * 0.26);
+  transform: translate(-50%, -20%);
+  border-radius: 50%;
+  background: rgba(0,0,0,.42);
+  filter: blur(7px);
+  z-index: 0;
+}
+@keyframes settle {
+  0%   { transform: translateY(-30px) scale(.88); opacity: 0; }
+  65%  { transform: translateY(3px)   scale(1.05); opacity: 1; }
+  100% { transform: translateY(0)     scale(1); }
+}
+.heap .chip3d.new { animation: settle .38s cubic-bezier(.3,.9,.4,1.25) backwards; }
+
+.flyer { position: fixed; z-index: 90; pointer-events: none; }
+
+.rollup { font-variant-numeric: tabular-nums; }
+
+@keyframes potGlow {
+  0%,100% { box-shadow: 0 0 0 rgba(255,215,94,0); }
+  50%     { box-shadow: 0 0 22px rgba(255,215,94,.75); }
+}
+.pot.win { animation: potGlow .7s ease-in-out 2; }
+
+.hint {
+  position: absolute; left: 50%; top: 63%; transform: translateX(-50%);
+  font-size: 12px; color: #cdbf95; background: rgba(0,0,0,.5);
+  padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+  opacity: 0; transition: opacity .25s;
+}
+.hint.show { opacity: 1; }
