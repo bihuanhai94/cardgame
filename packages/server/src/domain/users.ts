@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { mintTo } from './ledger.js'
+import { mintTo, withTransaction } from './ledger.js'
 
 export const INITIAL_GRANT = 10000
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -85,21 +85,15 @@ export function registerUser(
   const hash = hashPassword(input.password, salt)
   const now = Date.now()
 
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     db.prepare(
       `INSERT INTO users (id, nickname, password_hash, password_salt, invited_by, created_at)
        VALUES (?,?,?,?,?,?)`,
     ).run(id, nickname, hash, salt, codeRow.created_by, now)
     db.prepare('UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ?')
       .run(id, now, input.inviteCode)
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
-
-  mintTo(db, id, INITIAL_GRANT, 'initial_grant')
+    mintTo(db, id, INITIAL_GRANT, 'initial_grant')
+  })
 
   return { id, nickname, invitedBy: codeRow.created_by, createdAt: now }
 }

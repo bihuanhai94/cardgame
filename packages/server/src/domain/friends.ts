@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
+import { withTransaction } from './ledger.js'
 
 /** 好友关系以有序对存储，保证唯一性 */
 function pair(a: string, b: string): [string, string] {
@@ -59,17 +60,12 @@ export function acceptFriendRequest(
   const row = loadPending(db, requestId, actingUser)
   const [x, y] = pair(row.from_user, row.to_user)
   const now = Date.now()
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     db.prepare("UPDATE friend_requests SET status = 'accepted', resolved_at = ? WHERE id = ?")
       .run(now, requestId)
     db.prepare('INSERT INTO friendships (user_a, user_b, created_at) VALUES (?,?,?)')
       .run(x, y, now)
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  })
 }
 
 export function rejectFriendRequest(

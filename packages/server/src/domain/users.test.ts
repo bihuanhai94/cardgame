@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { openTestDb } from '../db/open.js'
-import { getBalance, userAccount } from './ledger.js'
+import { getBalance, userAccount, checkGlobalInvariant } from './ledger.js'
 import {
   createInviteCode, registerUser, login, verifyToken, logout, getUser, INITIAL_GRANT,
 } from './users.js'
@@ -86,6 +86,33 @@ describe('registerUser', () => {
     } catch { /* 预期抛出 */ }
     const row = db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }
     expect(row.n).toBe(0)
+  })
+
+  it('初始资金过账失败时不留下用户记录、邀请码不被消耗', () => {
+    const db = openTestDb()
+    const code = createInviteCode(db, null)
+
+    db.exec(`CREATE TRIGGER fail_initial_grant BEFORE INSERT ON ledger_entries
+             WHEN NEW.reason = 'initial_grant'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+
+    try {
+      expect(() =>
+        registerUser(db, { nickname: '甲', password: 'pw123456', inviteCode: code }),
+      ).toThrow()
+    } finally {
+      db.exec('DROP TRIGGER fail_initial_grant')
+    }
+
+    const userCount = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n
+    expect(userCount).toBe(0)
+
+    const codeRow = db.prepare('SELECT used_by FROM invite_codes WHERE code = ?').get(code) as
+      | { used_by: string | null }
+      | undefined
+    expect(codeRow!.used_by).toBeNull()
+
+    expect(checkGlobalInvariant(db).ok).toBe(true)
   })
 
   it('记录邀请人', () => {
