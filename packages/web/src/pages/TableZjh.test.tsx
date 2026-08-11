@@ -81,6 +81,24 @@ describe('TableZjh：闷牌与看牌', () => {
   })
 })
 
+describe('TableZjh：摊牌揭示以服务端下发的数据为准，不看「看没看过牌」', () => {
+  it('从未看牌就赢下全场（大家都弃牌）时，服务端在 over 揭示里下发了这手牌，客户端必须显示牌面而不是牌背', () => {
+    // 关键：looked 里没有 ME，但 hands 里有 ME 的牌——这正是引擎摊牌分支
+    // （无论是否看过牌，只要没弃牌就下发）产生的真实数据形状。
+    setup(
+      baseView({
+        over: true,
+        winner: ME,
+        looked: [], // 全程没看过牌
+        folded: [OPP1, OPP2],
+        hands: { [ME]: [{ suit: 's', rank: 14 }, { suit: 'h', rank: 13 }, { suit: 'd', rank: 2 }] },
+      }),
+    )
+    expect(screen.getByText('A')).toBeTruthy()
+    expect(screen.getByText('K')).toBeTruthy()
+  })
+})
+
 describe('TableZjh：回合与操作区禁用', () => {
   it('不是自己回合时，操作区按钮全部禁用', () => {
     setup(baseView({ turn: OPP1 }))

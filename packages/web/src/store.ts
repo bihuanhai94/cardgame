@@ -40,11 +40,6 @@ interface State {
   joinRoom(roomId: string): void
   act(action: unknown): void
   startGame(): void
-  look(): void
-  callBet(): void
-  raiseTo(to: number): void
-  foldHand(): void
-  compareWith(targetId: string): void
 }
 
 const api = new ApiClient('')
@@ -182,26 +177,6 @@ export const useStore = create<State>((set, get) => {
 
   startGame() {
     get().socket?.send({ t: 'start' })
-  },
-
-  look() {
-    get().act({ type: 'look' })
-  },
-
-  callBet() {
-    get().act({ type: 'call' })
-  },
-
-  raiseTo(to) {
-    get().act({ type: 'raise', to })
-  },
-
-  foldHand() {
-    get().act({ type: 'fold' })
-  },
-
-  compareWith(targetId) {
-    get().act({ type: 'compare', targetId })
   },
   }
 })

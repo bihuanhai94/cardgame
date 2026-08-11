@@ -1,4 +1,4 @@
-import { CardView } from '../ui/Card.js'
+import { CardView } from '../../ui/Card.js'
 import type { Card } from '@cardgame/shared'
 
 export interface SeatProps {
@@ -6,21 +6,22 @@ export interface SeatProps {
   nickname: string
   isTurn: boolean
   folded: boolean
-  looked: boolean
-  /** 只有自己看牌后才会有牌面；否则永远是 undefined（服务端未下发） */
+  /**
+   * 服务端下发的手牌，服务端才是可见性的权威：闷牌时不下发（cards 为
+   * undefined），摊牌/结算揭示时会下发——即便这名玩家从未看过自己的牌。
+   * 所以这里只看数据在不在，绝不用「看没看过牌」去反推是否该显示牌背。
+   */
   cards?: Card[]
   /** 处于比牌选人状态时，该座位是否可以被选为目标 */
   selectable?: boolean
   onSelect?: (id: string) => void
 }
 
-export function Seat({ id, nickname, isTurn, folded, looked, cards, selectable, onSelect }: SeatProps) {
+export function Seat({ id, nickname, isTurn, folded, cards, selectable, onSelect }: SeatProps) {
   return (
     <div className={`seat flex flex-col items-center gap-0.5 text-center ${folded ? 'opacity-30' : ''}`}>
       <div className="flex gap-0.5" style={{ minHeight: 28 }}>
-        {looked
-          ? (cards ?? [null, null, null]).map((c, i) => <CardView key={i} card={c} width={20} />)
-          : [0, 1, 2].map((i) => <CardView key={i} card={null} width={20} />)}
+        {(cards ?? [null, null, null]).map((c, i) => <CardView key={i} card={c ?? null} width={20} />)}
       </div>
       <div
         className={`avatar flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm ${

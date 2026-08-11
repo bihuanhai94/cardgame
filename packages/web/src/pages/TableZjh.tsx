@@ -4,9 +4,9 @@ import { CardView } from '../ui/Card.js'
 import { ChipHeap, type ChipHeapHandle } from '../ui/chips/ChipHeap.js'
 import { breakdown } from '../ui/chips/denoms.js'
 import { useRollup } from '../ui/useRollup.js'
-import { Seat } from '../table/Seat.js'
-import { BetArea } from '../table/BetArea.js'
-import { ActionBar } from '../table/ActionBar.js'
+import { Seat } from '../table/zhajinhua/Seat.js'
+import { BetArea } from '../table/zhajinhua/BetArea.js'
+import { ActionBar } from '../table/zhajinhua/ActionBar.js'
 import { SFX } from '../sfx/index.js'
 import type { Card } from '@cardgame/shared'
 
@@ -42,11 +42,26 @@ function safe(fn: () => void): void {
   }
 }
 
+/**
+ * 炸金花是这个牌桌特有的动作词汇（看牌/跟注/加注/弃牌/比牌）——不属于
+ * store 那个跨玩法共享的 State。放在这里而不是 store.ts，是为了不让
+ * store 的公共接口随着以后每加一种玩法（德州、斗地主……）就再堆一批
+ * 只有自己用的动词。它们全部只是 act(...) 的薄封装，没有任何自身状态。
+ */
+function useZjhActions() {
+  const act = useStore((s) => s.act)
+  return {
+    look: () => act({ type: 'look' }),
+    callBet: () => act({ type: 'call' }),
+    raiseTo: (to: number) => act({ type: 'raise', to }),
+    foldHand: () => act({ type: 'fold' }),
+    compareWith: (targetId: string) => act({ type: 'compare', targetId }),
+  }
+}
+
 export function TableZjh({ onLeave }: { onLeave: () => void }) {
-  const {
-    view, seats, roomId, user, error, lastSettlement,
-    look, callBet, raiseTo, foldHand, compareWith,
-  } = useStore()
+  const { view, seats, roomId, user, error, lastSettlement } = useStore()
+  const { look, callBet, raiseTo, foldHand, compareWith } = useZjhActions()
   const v = view as ZjhView | null
   const heapRef = useRef<ChipHeapHandle>(null)
   const prevPot = useRef(0)
@@ -133,7 +148,6 @@ export function TableZjh({ onLeave }: { onLeave: () => void }) {
               nickname={nicknameOf(id)}
               isTurn={v.turn === id}
               folded={v.folded.includes(id)}
-              looked={v.looked.includes(id)}
               cards={v.hands[id]}
               selectable={compareMode ? eligibleTargets.has(id) : undefined}
               onSelect={compareMode ? handleSelectTarget : undefined}
@@ -145,11 +159,9 @@ export function TableZjh({ onLeave }: { onLeave: () => void }) {
 
       <div className="own mx-auto flex flex-col items-center gap-1">
         <div className="flex gap-2">
-          {myFolded
-            ? null
-            : iLooked
-              ? (v.hands[user.id] ?? [null, null, null]).map((c, i) => <CardView key={i} card={c} width={54} />)
-              : [0, 1, 2].map((i) => <CardView key={i} card={null} width={54} />)}
+          {/* 判据是 v.hands[user.id] 在不在，不是「自己看没看过牌」——
+              服务端才是可见性的权威：摊牌/结算揭示时即便从未看牌也会下发。 */}
+          {(v.hands[user.id] ?? [null, null, null]).map((c, i) => <CardView key={i} card={c ?? null} width={54} />)}
         </div>
         <BetArea amount={v.committed[user.id] ?? 0} />
       </div>
