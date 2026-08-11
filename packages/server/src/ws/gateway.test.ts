@@ -5,11 +5,15 @@ import { checkGlobalInvariant } from '../domain/ledger.js'
 import { RoomManager } from '../room/room.js'
 import { registerEngine } from '../room/registry.js'
 import { highCard } from '../games/highcard.js'
+import { zhajinhua } from '../games/zhajinhua.js'
 import * as http from 'node:http'
 import { WebSocket as WsClient } from 'ws'
 import { handleMessage, attachGateway, renderBroadcast, type ConnCtx } from './gateway.js'
 
-beforeAll(() => registerEngine(highCard))
+beforeAll(() => {
+  registerEngine(highCard)
+  registerEngine(zhajinhua)
+})
 
 function boot() {
   const db = openTestDb()
@@ -307,6 +311,102 @@ describe('renderBroadcast（广播路径的逐连接裁剪）', () => {
     expect(viewA.view.hands).not.toHaveProperty(b.user.id)
   })
 
+})
+
+describe('roomState 携带 gameId', () => {
+  it('join 返回的 roomState 带有正确的 gameId', () => {
+    const { db, rooms, mk } = boot()
+    const a = mk('甲')
+    const room = rooms.create({ gameId: 'highcard', ownerId: a.user.id, seats: 2, options: { ante: 100 } })
+    const ca = ctx(db, rooms)
+    handleMessage(ca, JSON.stringify({ t: 'auth', token: a.token }))
+    const out = handleMessage(ca, JSON.stringify({ t: 'join', roomId: room.id }))
+    const roomState = out.find((m) => m.t === 'roomState') as { gameId: string }
+    expect(roomState.gameId).toBe('highcard')
+  })
+})
+
+describe('炸金花经网关接入', () => {
+  function playingZjh() {
+    const { db, rooms, mk } = boot()
+    const a = mk('甲')
+    const b = mk('乙')
+    const room = rooms.create({
+      gameId: 'zhajinhua',
+      ownerId: a.user.id,
+      seats: 2,
+      options: { ante: 10, maxRounds: 5 },
+    })
+    const ca = ctx(db, rooms)
+    const cb = ctx(db, rooms)
+    handleMessage(ca, JSON.stringify({ t: 'auth', token: a.token }))
+    handleMessage(cb, JSON.stringify({ t: 'auth', token: b.token }))
+    handleMessage(ca, JSON.stringify({ t: 'join', roomId: room.id }))
+    handleMessage(cb, JSON.stringify({ t: 'join', roomId: room.id }))
+    room.start()
+    return { db, room, ca, cb, a, b }
+  }
+
+  it('gameId=zhajinhua 的房间可以创建（未注册的 gameId 由 HTTP 层负责 400，此处走 RoomManager 直接建房验证引擎路径畅通）', () => {
+    const { rooms, mk } = boot()
+    const a = mk('甲')
+    const room = rooms.create({ gameId: 'zhajinhua', ownerId: a.user.id, seats: 2, options: { ante: 10, maxRounds: 5 } })
+    expect(room.gameId).toBe('zhajinhua')
+  })
+
+  it('房主开局后，两个连接各自收到自己的裁剪视图：未看牌者看不到自己的手牌，也看不到对方的', () => {
+    const { room, ca, cb, a, b } = playingZjh()
+    void ca; void cb
+    const [renderedA, renderedB] = renderBroadcast(room, [
+      { userId: a.user.id },
+      { userId: b.user.id },
+    ])
+    const viewA = renderedA!.find((m) => m.t === 'gameView') as { view: { hands: Record<string, unknown> } }
+    const viewB = renderedB!.find((m) => m.t === 'gameView') as { view: { hands: Record<string, unknown> } }
+    // 双方都还没看牌：谁的手牌都不该出现在任何一方的视图里
+    expect(viewA.view.hands).not.toHaveProperty(a.user.id)
+    expect(viewA.view.hands).not.toHaveProperty(b.user.id)
+    expect(viewB.view.hands).not.toHaveProperty(a.user.id)
+    expect(viewB.view.hands).not.toHaveProperty(b.user.id)
+  })
+
+  it('甲看牌后，甲的视图里能看到自己的手牌，乙的视图里看不到甲的手牌', () => {
+    const { room, ca, a, b } = playingZjh()
+    handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'look' } }))
+    const [renderedA, renderedB] = renderBroadcast(room, [
+      { userId: a.user.id },
+      { userId: b.user.id },
+    ])
+    const viewA = renderedA!.find((m) => m.t === 'gameView') as { view: { hands: Record<string, unknown> } }
+    const viewB = renderedB!.find((m) => m.t === 'gameView') as { view: { hands: Record<string, unknown> } }
+    expect(viewA.view.hands).toHaveProperty(a.user.id)
+    expect(viewB.view.hands).not.toHaveProperty(a.user.id)
+  })
+
+  it('比牌动作经网关透传给引擎处理：甲看牌后向乙（未看牌）发起比牌，被引擎判定非法，返回 ILLEGAL_ACTION，房间状态不变', () => {
+    const { room, ca, b } = playingZjh()
+    handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'look' } }))
+    const before = room.viewFor(null)
+    const out = handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'compare', targetId: b.user.id } }))
+    expect(out[0]).toMatchObject({ t: 'error', code: 'ILLEGAL_ACTION' })
+    expect(room.isStarted()).toBe(true)
+    expect(room.viewFor(null)).toEqual(before)
+  })
+
+  it('比牌动作在双方都看牌后经网关透传，被引擎正确处理并推进对局', () => {
+    const { room, ca, cb, b } = playingZjh()
+    // look 不推进行动权，需再跟注一次才轮到对方；两人各走一轮 look+call 后回到甲手上再发起比牌
+    handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'look' } }))
+    handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'call' } }))
+    handleMessage(cb, JSON.stringify({ t: 'action', action: { type: 'look' } }))
+    handleMessage(cb, JSON.stringify({ t: 'action', action: { type: 'call' } }))
+    const out = handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'compare', targetId: b.user.id } }))
+    expect(out.some((m) => m.t === 'events')).toBe(true)
+    const events = (out.find((m) => m.t === 'events') as { events: { type: string }[] }).events
+    expect(events.some((e) => e.type === 'compared')).toBe(true)
+    // 比牌淘汰一人，两人房间对局应当结束
+    expect(room.isStarted()).toBe(false)
+  })
 })
 
 describe('attachGateway 广播（真实两连接）', () => {

@@ -8,7 +8,7 @@ export type ClientMessage =
 
 export type ServerMessage =
   | { t: 'authOk'; userId: string }
-  | { t: 'roomState'; roomId: string; ownerId: string; seats: SeatInfo[]; started: boolean }
+  | { t: 'roomState'; roomId: string; gameId: string; ownerId: string; seats: SeatInfo[]; started: boolean }
   | { t: 'gameView'; view: unknown }
   | { t: 'events'; events: { type: string; payload?: unknown }[] }
   | { t: 'settled'; deltas: Record<string, number> }

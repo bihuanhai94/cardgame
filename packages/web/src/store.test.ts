@@ -16,7 +16,7 @@ describe('applyServerMessage', () => {
 
   it('roomState 写入座位', () => {
     useStore.getState().applyServerMessage({
-      t: 'roomState', roomId: '123456', ownerId: 'u1',
+      t: 'roomState', roomId: '123456', gameId: 'highcard', ownerId: 'u1',
       seats: [{ index: 0, userId: 'u1', nickname: '甲', online: true, isAi: false }],
       started: false,
     })

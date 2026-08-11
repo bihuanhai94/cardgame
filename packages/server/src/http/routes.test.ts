@@ -4,14 +4,24 @@ import { createInviteCode } from '../domain/users.js'
 import { RoomManager } from '../room/room.js'
 import { registerEngine } from '../room/registry.js'
 import { highCard } from '../games/highcard.js'
+import { zhajinhua } from '../games/zhajinhua.js'
 import { buildApp } from './routes.js'
 
 registerEngine(highCard)
+registerEngine(zhajinhua)
 
 function boot() {
   const db = openTestDb()
   const app = buildApp({ db, rooms: new RoomManager() })
   return { db, app }
+}
+
+/** 同 boot()，但同时把 RoomManager 实例返回出来，便于测试直接检视房间内部状态（如 options 是否原样到达引擎）。 */
+function boot2() {
+  const db = openTestDb()
+  const rooms = new RoomManager()
+  const app = buildApp({ db, rooms })
+  return { db, app, rooms }
 }
 
 async function newUser(app: ReturnType<typeof buildApp>, db: ReturnType<typeof openTestDb>, nickname: string) {
@@ -193,5 +203,19 @@ describe('房间接口', () => {
     })
     const res = await app.inject({ method: 'GET', url: '/api/rooms', headers: auth(a.token) })
     expect(res.json().rooms).toHaveLength(1)
+  })
+
+  it('创建 gameId=zhajinhua 的房间成功，且 ante/maxRounds 完整传入引擎（不被 HTTP 层丢弃或改写）', async () => {
+    const { db, app, rooms } = boot2()
+    const a = await newUser(app, db, '甲')
+    const res = await app.inject({
+      method: 'POST', url: '/api/rooms',
+      headers: auth(a.token), payload: { gameId: 'zhajinhua', seats: 2, options: { ante: 25, maxRounds: 3 } },
+    })
+    expect(res.statusCode).toBe(200)
+    const roomId = res.json().roomId as string
+    const room = rooms.get(roomId)!
+    expect(room.gameId).toBe('zhajinhua')
+    expect(room.options).toEqual({ ante: 25, maxRounds: 3 })
   })
 })

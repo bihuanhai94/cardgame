@@ -61,7 +61,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
       if (user) room.setNickname(user.id, user.nickname)
       ctx.roomId = room.id
       const out: ServerMessage[] = [
-        { t: 'roomState', roomId: room.id, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
+        { t: 'roomState', roomId: room.id, gameId: room.gameId, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
       ]
       if (room.isStarted()) out.push({ t: 'gameView', view: room.viewFor(ctx.userId) })
       return out
@@ -72,7 +72,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
         ctx.rooms.get(ctx.roomId)?.leave(ctx.userId)
         ctx.roomId = null
       }
-      return [{ t: 'roomState', roomId: '', ownerId: '', seats: [], started: false }]
+      return [{ t: 'roomState', roomId: '', gameId: '', ownerId: '', seats: [], started: false }]
     }
 
     case 'start': {
@@ -86,7 +86,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
         return [err('START_FAILED', (e as Error).message)]
       }
       return [
-        { t: 'roomState', roomId: room.id, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
+        { t: 'roomState', roomId: room.id, gameId: room.gameId, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
         { t: 'gameView', view: room.viewFor(ctx.userId) },
       ]
     }
@@ -106,7 +106,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
       const out: ServerMessage[] = [
         { t: 'events', events },
         { t: 'gameView', view: room.viewFor(ctx.userId) },
-        { t: 'roomState', roomId: room.id, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
+        { t: 'roomState', roomId: room.id, gameId: room.gameId, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
       ]
 
       const settlement = room.takeSettlement()
@@ -127,7 +127,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
  * 绝不复用同一份渲染结果。抽成纯函数以便直接测试广播路径，不必驱动真实 socket。
  */
 export function renderBroadcast(
-  room: Pick<import('../room/room.js').Room, 'viewFor' | 'id' | 'ownerId' | 'seatInfos' | 'isStarted'>,
+  room: Pick<import('../room/room.js').Room, 'viewFor' | 'id' | 'gameId' | 'ownerId' | 'seatInfos' | 'isStarted'>,
   targets: { userId: string | null }[],
 ): ServerMessage[][] {
   return targets.map((t) => [
@@ -135,6 +135,7 @@ export function renderBroadcast(
     {
       t: 'roomState',
       roomId: room.id,
+      gameId: room.gameId,
       ownerId: room.ownerId,
       seats: room.seatInfos(),
       started: room.isStarted(),
