@@ -78,6 +78,32 @@ describe('Room 开局', () => {
   })
 })
 
+describe('Room 断线重连', () => {
+  it('对局中离开不释放座位，标记为离线与 AI 接管', () => {
+    const room = makeRoom()
+    room.sit('a'); room.sit('b')
+    room.start()
+    room.leave('a')
+    const seatA = room.seatInfos().find((s) => s.userId === 'a')
+    expect(seatA).toBeDefined()
+    expect(seatA!.online).toBe(false)
+    expect(seatA!.isAi).toBe(true)
+    // 引擎的玩家列表不受影响，座位没有被清空
+    expect(room.players()).toContain('a')
+  })
+
+  it('setOnline(true) 重连后清除 AI 标记', () => {
+    const room = makeRoom()
+    room.sit('a'); room.sit('b')
+    room.start()
+    room.leave('a')
+    room.setOnline('a', true)
+    const seatA = room.seatInfos().find((s) => s.userId === 'a')
+    expect(seatA!.online).toBe(true)
+    expect(seatA!.isAi).toBe(false)
+  })
+})
+
 describe('Room 行动与视图', () => {
   function started() {
     const room = makeRoom()

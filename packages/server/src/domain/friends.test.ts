@@ -56,6 +56,12 @@ describe('好友请求', () => {
     expect(() => sendFriendRequest(db, a.id, b.id)).toThrow(/请求已存在/)
   })
 
+  it('对方已经发过待处理请求时，反向发送也应被拒绝', () => {
+    const { db, a, b } = setup()
+    sendFriendRequest(db, a.id, b.id)
+    expect(() => sendFriendRequest(db, b.id, a.id)).toThrow(/请求已存在/)
+  })
+
   it('已是好友时不能再发请求', () => {
     const { db, a, b } = setup()
     const id = sendFriendRequest(db, a.id, b.id)
