@@ -218,4 +218,18 @@ describe('房间接口', () => {
     expect(room.gameId).toBe('zhajinhua')
     expect(room.options).toEqual({ ante: 25, maxRounds: 3 })
   })
+
+  it('非法 ante 返回 400，且不留下孤儿房间', async () => {
+    const { db, app } = boot()
+    const a = await newUser(app, db, '甲')
+    const before = await app.inject({ method: 'GET', url: '/api/rooms', headers: auth(a.token) })
+    const beforeCount = before.json().rooms.length
+    const res = await app.inject({
+      method: 'POST', url: '/api/rooms',
+      headers: auth(a.token), payload: { gameId: 'zhajinhua', seats: 2, options: { ante: -100 } },
+    })
+    expect(res.statusCode).toBe(400)
+    const after = await app.inject({ method: 'GET', url: '/api/rooms', headers: auth(a.token) })
+    expect(after.json().rooms.length).toBe(beforeCount)
+  })
 })

@@ -333,8 +333,8 @@ describe('结算', () => {
   })
 
   it('封顶被迫比牌收场时，赢的是历次比牌里真正胜出的玩家，而不是随意一人', () => {
-    let s = zhajinhua.init({ ...ctx, options: { ante: 100, maxRounds: 0 } })
-    s = { ...s, hands: { a: HANDS.high9, b: HANDS.low, c: HANDS.low } }
+    let s = zhajinhua.init({ ...ctx, options: { ante: 100, maxRounds: 1 } })
+    s = { ...s, round: 1, hands: { a: HANDS.high9, b: HANDS.low, c: HANDS.low } }
     s = act(s, 'a', { type: 'look' })
     s = { ...s, looked: [...s.looked, 'b', 'c'], bet: { ...s.bet, seats: s.bet.seats.map((x) => (x.id === 'a' ? x : { ...x, stakeFactor: 1 })) } }
     s = act(s, 'a', { type: 'compare', targetId: 'b' }) // a 赢，b 出局
@@ -408,6 +408,27 @@ describe('视图裁剪', () => {
     expect(json.includes(bCard)).toBe(false)
     // committed 字段本身确实序列化出来了，不是被意外裁掉
     expect(json.includes('"committed"')).toBe(true)
+  })
+})
+
+describe('options 校验', () => {
+  const mk = (options: Record<string, unknown>) =>
+    () => zhajinhua.init({ seed: 1, players: ['a', 'b'], options })
+
+  it('拒绝非正整数底注', () => {
+    expect(mk({ ante: 0 })).toThrow(/底注/)
+    expect(mk({ ante: -100 })).toThrow(/底注/)
+    expect(mk({ ante: 10.5 })).toThrow(/底注/)
+  })
+
+  it('拒绝小于 1 的封顶轮数', () => {
+    expect(mk({ ante: 100, maxRounds: 0 })).toThrow(/封顶/)
+    expect(mk({ ante: 100, maxRounds: -1 })).toThrow(/封顶/)
+    expect(mk({ ante: 100, maxRounds: 2.5 })).toThrow(/封顶/)
+  })
+
+  it('缺省值仍然可用', () => {
+    expect(() => zhajinhua.init({ seed: 1, players: ['a', 'b'], options: {} })).not.toThrow()
   })
 })
 

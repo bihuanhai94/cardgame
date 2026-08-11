@@ -33,6 +33,24 @@ export type ZjhAction =
 /** 无需建模筹码上限：本引擎不涉及全下/边池，给一个足够大的栈即可。 */
 const UNLIMITED_STACK = Number.MAX_SAFE_INTEGER
 
+/**
+ * options 校验的唯一实现：引擎 init 与建房路由（POST /api/rooms）共用，
+ * 避免同一条规则出现两份拷贝而后续跑偏。
+ *
+ * 返回归一化后的 ante/maxRounds（缺省时套用默认值），非法时抛出中文错误。
+ */
+export function validateZjhOptions(options: Record<string, unknown>): { ante: number; maxRounds: number } {
+  const ante = options.ante ?? 100
+  if (typeof ante !== 'number' || !Number.isInteger(ante) || ante <= 0) {
+    throw new Error('底注必须是正整数')
+  }
+  const maxRounds = options.maxRounds ?? 10
+  if (typeof maxRounds !== 'number' || !Number.isInteger(maxRounds) || maxRounds < 1) {
+    throw new Error('封顶轮数必须是不小于 1 的整数')
+  }
+  return { ante, maxRounds }
+}
+
 function currentActor(state: ZjhState): string | null {
   if (state.over) return null
   return state.bet.seats[state.bet.turn]?.id ?? null
@@ -77,8 +95,7 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
   id: 'zhajinhua',
 
   init(ctx: EngineContext): ZjhState {
-    const ante = typeof ctx.options.ante === 'number' ? ctx.options.ante : 100
-    const maxRounds = typeof ctx.options.maxRounds === 'number' ? ctx.options.maxRounds : 10
+    const { ante, maxRounds } = validateZjhOptions(ctx.options)
     const deck = shuffle(createDeck(), createRng(ctx.seed))
     const hands: Record<string, Card[]> = {}
     ctx.players.forEach((p, i) => {
