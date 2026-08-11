@@ -5,3 +5,5 @@ dist/
 *.db-wal
 *.db-shm
 *.tsbuildinfo
+vitest.workspace.d.ts
+vitest.workspace.js
