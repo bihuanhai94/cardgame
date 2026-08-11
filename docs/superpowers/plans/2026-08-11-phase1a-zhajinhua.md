@@ -552,6 +552,21 @@ describe('isLegalBet', () => {
     expect(isLegalBet(rs, 'a', { type: 'raise', to: 40 })).toBe(false)
   })
 
+  it('闷牌者的加注能力按折算后的金额判定，而非名义额', () => {
+    // 闷牌 factor 0.5：加注到 40 实付 20，30 筹码够；加注到 80 实付 40，不够
+    const rs = startRound(seats(['a', 30, 0.5], ['b', 1000]), 0, 20, 20)
+    expect(isLegalBet(rs, 'a', { type: 'raise', to: 40 })).toBe(true)
+    expect(isLegalBet(rs, 'a', { type: 'raise', to: 80 })).toBe(false)
+  })
+
+  it('闷牌者实付金额与 toCall 的折算口径一致', () => {
+    let rs = startRound(seats(['a', 1000, 0.5], ['b', 1000]), 0, 25, 25)
+    const before = rs.seats.find((s) => s.id === 'a')!.stack
+    rs = applyBet(rs, 'a', { type: 'raise', to: 51 })
+    const paid = before - rs.seats.find((s) => s.id === 'a')!.stack
+    expect(paid).toBe(Math.ceil(51 * 0.5))   // 26，不是 25.5 也不是 25
+  })
+
   it('筹码不足以跟注时仍可跟（全下）', () => {
     const rs = startRound(seats(['a', 12], ['b', 1000]), 0, 20, 20)
     expect(isLegalBet(rs, 'a', { type: 'call' })).toBe(true)
@@ -695,12 +710,22 @@ export function startRound(
   return advanceIfNeeded(rs)
 }
 
-/** 该家还需投入多少才算跟上（已按 stakeFactor 折算并向上取整） */
+/**
+ * 把名义额度折算成该家还需实付的金额。
+ *
+ * **这是全模块唯一的取整点。** 折半注会产生小数，若多处各自 Math.ceil，
+ * 同一情形会算出不同的数，池子就配不平了 —— 且这种错误要到结算才暴露。
+ * 任何需要「按 stakeFactor 折算」的地方都必须走这里。
+ */
+function needFor(s: BetSeat, nominal: number): number {
+  return Math.ceil(nominal * s.stakeFactor) - s.committed
+}
+
+/** 该家还需投入多少才算跟上 */
 export function toCall(rs: RoundState, seatId: string): number {
   const s = seatOf(rs, seatId)
   if (!s) return 0
-  const need = Math.ceil(rs.currentBet * s.stakeFactor) - s.committed
-  return Math.max(0, need)
+  return Math.max(0, needFor(s, rs.currentBet))
 }
 
 export function isLegalBet(rs: RoundState, seatId: string, a: BetAction): boolean {
@@ -714,8 +739,7 @@ export function isLegalBet(rs: RoundState, seatId: string, a: BetAction): boolea
   if (a.type === 'raise') {
     if (!Number.isInteger(a.to)) return false
     if (a.to < rs.currentBet + rs.minRaise) return false
-    const need = Math.ceil(a.to * s.stakeFactor) - s.committed
-    return need <= s.stack           // 筹码不够就不能加注，只能全下跟注
+    return needFor(s, a.to) <= s.stack   // 筹码不够就不能加注，只能全下跟注
   }
   return false
 }
@@ -728,9 +752,7 @@ export function applyBet(rs0: RoundState, seatId: string, a: BetAction): RoundSt
   if (a.type === 'fold') {
     s.folded = true
   } else {
-    const want = a.type === 'call'
-      ? toCall(rs, seatId)
-      : Math.ceil(a.to * s.stakeFactor) - s.committed
+    const want = a.type === 'call' ? toCall(rs, seatId) : needFor(s, a.to)
     const pay = Math.min(want, s.stack)
     s.stack -= pay
     s.committed += pay
