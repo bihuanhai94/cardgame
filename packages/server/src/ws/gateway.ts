@@ -28,6 +28,10 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
     return [err('BAD_JSON', '消息不是合法 JSON')]
   }
 
+  if (typeof msg !== 'object' || msg === null) {
+    return [err('BAD_JSON', '消息必须是一个对象')]
+  }
+
   if (msg.t === 'auth') {
     const user = verifyToken(ctx.db, msg.token)
     if (!user) return [err('BAD_TOKEN', '登录凭证无效')]
@@ -126,11 +130,15 @@ export function attachGateway(
     conns.set(sock, ctx)
 
     sock.on('message', (data) => {
-      const before = ctx.roomId
-      const out = handleMessage(ctx, data.toString())
-      for (const m of out) sock.send(JSON.stringify(m))
-      const roomId = ctx.roomId ?? before
-      if (roomId) broadcast(roomId, sock)
+      try {
+        const before = ctx.roomId
+        const out = handleMessage(ctx, data.toString())
+        for (const m of out) sock.send(JSON.stringify(m))
+        const roomId = ctx.roomId ?? before
+        if (roomId) broadcast(roomId, sock)
+      } catch (e) {
+        sock.send(JSON.stringify({ t: 'error', code: 'INTERNAL', message: '服务器内部错误' }))
+      }
     })
 
     sock.on('close', () => {

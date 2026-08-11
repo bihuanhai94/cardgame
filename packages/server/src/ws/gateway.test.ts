@@ -51,6 +51,30 @@ describe('鉴权消息', () => {
     expect(handleMessage(ctx(db, rooms), '{ 不是 json')[0]!.t).toBe('error')
   })
 
+  it('有效 JSON 但值为 null 返回 error 而不抛出', () => {
+    const { db, rooms } = boot()
+    expect(() => handleMessage(ctx(db, rooms), 'null')).not.toThrow()
+    expect(handleMessage(ctx(db, rooms), 'null')[0]!.t).toBe('error')
+  })
+
+  it('有效 JSON 但值为数字返回 error', () => {
+    const { db, rooms } = boot()
+    expect(() => handleMessage(ctx(db, rooms), '42')).not.toThrow()
+    expect(handleMessage(ctx(db, rooms), '42')[0]!.t).toBe('error')
+  })
+
+  it('有效 JSON 但值为数组返回 error', () => {
+    const { db, rooms } = boot()
+    expect(() => handleMessage(ctx(db, rooms), '[]')).not.toThrow()
+    expect(handleMessage(ctx(db, rooms), '[]')[0]!.t).toBe('error')
+  })
+
+  it('有效 JSON 但值为字符串返回 error', () => {
+    const { db, rooms } = boot()
+    expect(() => handleMessage(ctx(db, rooms), '"hello"')).not.toThrow()
+    expect(handleMessage(ctx(db, rooms), '"hello"')[0]!.t).toBe('error')
+  })
+
   it('未知消息类型返回 error', () => {
     const { db, rooms, mk } = boot()
     const a = mk('甲')
