@@ -3608,8 +3608,10 @@ Expected: PASS。
 在根 `package.json` 的 scripts 增加：
 
 ```json
-"fuzz": "node --experimental-sqlite --experimental-strip-types packages/server/src/testing/run-fuzz.ts"
+"fuzz": "tsc -b && node --experimental-sqlite packages/server/dist/testing/run-fuzz.js"
 ```
+
+脚本先 `tsc -b` 再运行编译产物。**不要让 `run-fuzz.ts` 直接从 `dist/` 导入**——那会把编译产物变成编译输入，`tsc -b` 会以 TS5055 失败。源码之间一律用 `.js` 后缀的相对导入（NodeNext 约定），由 tsc 负责产出。
 
 创建 `packages/server/src/testing/run-fuzz.ts`：
 
