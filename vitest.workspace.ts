@@ -15,4 +15,5 @@ export default defineWorkspace([
       environment: 'node',
     },
   },
+  './packages/web/vite.config.ts',
 ])
