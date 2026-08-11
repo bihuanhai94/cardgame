@@ -4,18 +4,6 @@ import { highCard } from '../games/highcard.js'
 import { zhajinhua, type ZjhState } from '../games/zhajinhua.js'
 import { fuzzEngine } from './fuzz.js'
 
-/**
- * 炸金花的手牌每局都不同（由 round+1 派生的种子决定），secretProbe 只接受一个
- * 固定字符串，所以每局单独 peek 一次 init 结果，取 owner 手牌的 JSON 表示作为
- * 该局专属的探针字符串，再以 rounds: 1 跑一局 fuzz。只调用引擎已公开的 init，
- * 不改动引擎本身。
- */
-function zjhSecretFor(round: number, players: string[], options: Record<string, unknown>) {
-  const state = zhajinhua.init({ seed: round + 1, players, options }) as ZjhState
-  const owner = players[0]!
-  return { probe: JSON.stringify(state.hands[owner]), owner }
-}
-
 describe('fuzzEngine', () => {
   it('highcard 通过 2000 局随机对局', () => {
     const r = fuzzEngine(highCard, { rounds: 2000, players: ['a', 'b', 'c'], options: { ante: 100 } })
@@ -142,23 +130,45 @@ describe('fuzzEngine', () => {
   it('炸金花跑多局 fuzz（probeIllegal + secretProbe 全开）不抛', () => {
     const players = ['a', 'b', 'c']
     const options = { ante: 100, maxRounds: 10 }
-    let totalRounds = 0
-    let totalActions = 0
-    for (let round = 0; round < 5000; round++) {
-      const { probe, owner } = zjhSecretFor(round, players, options)
-      const r = fuzzEngine(zhajinhua, {
-        rounds: 1,
-        players,
-        options,
-        probeIllegal: true,
-        secretProbe: probe,
-        secretOwner: owner,
-        maxSteps: 500,
-      })
-      totalRounds += r.rounds
-      totalActions += r.actions
+    const owner = players[0]!
+    const r = fuzzEngine(zhajinhua, {
+      rounds: 5000,
+      players,
+      options,
+      probeIllegal: true,
+      // secretFor 拿到的是 fuzzEngine 自己为该局 init 出来的初始状态——同一份
+      // state，不是调用方重新派生种子得到的另一份——所以探针必然对应真正玩的那一局。
+      secretFor: (_round, state: ZjhState) => ({
+        probe: JSON.stringify(state.hands[owner]),
+        owner,
+      }),
+    })
+    expect(r.rounds).toBe(5000)
+    expect(r.actions).toBeGreaterThan(0)
+  })
+
+  it('回归：同一次 fuzzEngine 调用里每局种子必须不同（此前 rounds:1 外循环导致种子恒为 1）', () => {
+    const seedsSeen: number[] = []
+    const seedSpy: Engine<{ seed: number; done: boolean }, { type: 'go' }> = {
+      id: 'seed-spy',
+      init: (ctx) => ({ seed: ctx.seed, done: false }),
+      legalActions: (s) => (s.done ? [] : [{ type: 'go' }]),
+      isLegal: (s) => !s.done,
+      apply: (s) => ({ state: { ...s, done: true }, events: [] }),
+      isOver: (s) => s.done,
+      settle: () => ({ deltas: {} }),
+      view: (s) => s,
     }
-    expect(totalRounds).toBe(5000)
-    expect(totalActions).toBeGreaterThan(0)
+    // 用 secretFor 侧信道记录每局实际拿到的种子，而不是自行重新计算。
+    fuzzEngine(seedSpy, {
+      rounds: 3,
+      players: ['a'],
+      secretFor: (_round, state) => {
+        seedsSeen.push(state.seed)
+        return null
+      },
+    })
+    expect(seedsSeen).toEqual([1, 2, 3])
+    expect(new Set(seedsSeen).size).toBe(3)
   })
 })

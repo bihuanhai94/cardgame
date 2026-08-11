@@ -6,42 +6,35 @@ const gameId = process.argv[2] ?? 'highcard'
 const rounds = Number(process.argv[3] ?? 100000)
 
 const started = Date.now()
-let totalRounds = 0
-let totalActions = 0
+let result: { rounds: number; actions: number }
 
 switch (gameId) {
   case 'highcard': {
-    const result = fuzzEngine(highCard, {
+    result = fuzzEngine(highCard, {
       rounds,
       players: ['a', 'b', 'c'],
       options: { ante: 100 },
       probeIllegal: true,
     })
-    totalRounds = result.rounds
-    totalActions = result.actions
     break
   }
   case 'zhajinhua': {
-    // 手牌逐局随机，secretProbe 只接受单个固定字符串，所以逐局 peek 一次
-    // engine.init 取 owner 手牌的 JSON 表示作为该局专属探针，再以 rounds: 1
-    // 跑一局 fuzz——只调用引擎已公开的 init，不改动引擎本身。
+    // secretProbe 是单个固定字符串，但炸金花每局手牌不同，需要按局给出探针。
+    // secretFor 拿到的是 fuzzEngine 自己 init 出来的该局初始状态，不用（也不能）
+    // 自己重新派生种子，因此不会跟内部真正玩的那一局手牌错位。
     const players = ['a', 'b', 'c']
     const options = { ante: 100, maxRounds: 10 }
     const owner = players[0]!
-    for (let round = 0; round < rounds; round++) {
-      const state = zhajinhua.init({ seed: round + 1, players, options }) as ZjhState
-      const probe = JSON.stringify(state.hands[owner])
-      const result = fuzzEngine(zhajinhua, {
-        rounds: 1,
-        players,
-        options,
-        probeIllegal: true,
-        secretProbe: probe,
-        secretOwner: owner,
-      })
-      totalRounds += result.rounds
-      totalActions += result.actions
-    }
+    result = fuzzEngine(zhajinhua, {
+      rounds,
+      players,
+      options,
+      probeIllegal: true,
+      secretFor: (_round, state: ZjhState) => ({
+        probe: JSON.stringify(state.hands[owner]),
+        owner,
+      }),
+    })
     break
   }
   default:
@@ -49,5 +42,5 @@ switch (gameId) {
 }
 
 console.log(
-  `[${gameId}] 通过 ${totalRounds} 局，共 ${totalActions} 个动作，耗时 ${Date.now() - started}ms`,
+  `[${gameId}] 通过 ${result.rounds} 局，共 ${result.actions} 个动作，耗时 ${Date.now() - started}ms`,
 )

@@ -5,16 +5,23 @@ export interface FuzzResult {
   actions: number
 }
 
-export interface FuzzOpts {
+export interface FuzzOpts<S = unknown> {
   rounds: number
   players: string[]
   options?: Record<string, unknown>
   maxSteps?: number
   /** 尝试投递一个必定非法的动作，验证引擎会拒绝 */
   probeIllegal?: boolean
-  /** 在非 owner 的视图里搜索该字符串，出现即视为泄漏 */
+  /** 在非 owner 的视图里搜索该字符串，出现即视为泄漏（静态、全程固定的探针） */
   secretProbe?: string
   secretOwner?: string
+  /**
+   * 按局给出探针：拿到的是 fuzzEngine 刚为该局 init 出来的初始状态（种子与内部
+   * `round + 1` 完全一致，调用方不必也不能自己重新派生种子），据此返回该局专属
+   * 的 { probe, owner }；返回 null/undefined 则跳过该局的泄漏检查。优先于
+   * 静态的 secretProbe/secretOwner。
+   */
+  secretFor?: (round: number, initialState: S) => { probe: string; owner: string } | null | undefined
 }
 
 /**
@@ -25,8 +32,7 @@ export interface FuzzOpts {
  * 另可选检查视图裁剪是否泄漏他人信息——只在对局进行中检查（!engine.isOver），
  * 终局摊牌是引擎的正当行为，不应被计为泄漏。
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResult {
+export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts<S>): FuzzResult {
   const maxSteps = opts.maxSteps ?? 500
   let actionCount = 0
 
@@ -37,6 +43,18 @@ export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResu
       players: [...opts.players],
       options: opts.options ?? {},
     })
+
+    // 按局解析这一局专属的泄漏探针：secretFor 拿到的就是上面这个 init 出来的
+    // 初始状态本身，不会重新派生种子，因此不会跟内部 round+1 的种子失配。
+    // 提供了 secretFor 但该局返回 null/undefined 时，视为「这一局不检查」，
+    // 不会退回静态 secretProbe/secretOwner（那样会检查错误的一局）。
+    let secretProbe = opts.secretProbe
+    let secretOwner = opts.secretOwner
+    if (opts.secretFor) {
+      const perRound = opts.secretFor(round, state)
+      secretProbe = perRound?.probe
+      secretOwner = perRound?.owner
+    }
 
     let steps = 0
     while (!engine.isOver(state)) {
@@ -67,11 +85,11 @@ export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResu
         }
       }
 
-      if (opts.secretProbe && opts.secretOwner) {
+      if (secretProbe && secretOwner) {
         for (const viewer of [...opts.players, null]) {
-          if (viewer === opts.secretOwner) continue
+          if (viewer === secretOwner) continue
           const json = JSON.stringify(engine.view(state, viewer))
-          if (json.includes(opts.secretProbe)) {
+          if (json.includes(secretProbe)) {
             throw new Error(`第 ${round} 局视图泄漏：${viewer ?? '观战者'} 看到了他人信息`)
           }
         }
