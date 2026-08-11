@@ -6,11 +6,12 @@ import { Friends } from './pages/Friends.js'
 import { Loans } from './pages/Loans.js'
 import { Ranking } from './pages/Ranking.js'
 import { Table } from './pages/Table.js'
+import { TableZjh } from './pages/TableZjh.js'
 
 type Tab = 'lobby' | 'friends' | 'loans' | 'ranking' | 'table'
 
 export function App() {
-  const { token, api, connect, joinRoom } = useStore()
+  const { token, api, connect, joinRoom, gameId } = useStore()
   const [tab, setTab] = useState<Tab>('lobby')
 
   useEffect(() => {
@@ -30,7 +31,8 @@ export function App() {
       {tab === 'friends' && <Friends />}
       {tab === 'loans' && <Loans />}
       {tab === 'ranking' && <Ranking />}
-      {tab === 'table' && <Table onLeave={() => setTab('lobby')} />}
+      {tab === 'table' && gameId === 'zhajinhua' && <TableZjh onLeave={() => setTab('lobby')} />}
+      {tab === 'table' && gameId !== 'zhajinhua' && <Table onLeave={() => setTab('lobby')} />}
 
       <nav className="fixed inset-x-0 bottom-0 flex border-t bg-white">
         {([['lobby', '大厅'], ['friends', '好友'], ['loans', '借条'], ['ranking', '排行']] as const).map(

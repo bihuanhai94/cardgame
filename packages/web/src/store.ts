@@ -22,6 +22,7 @@ interface State {
   user: User | null
   netWorth: NetWorth | null
   roomId: string | null
+  gameId: string | null
   ownerId: string | null
   started: boolean
   seats: SeatInfo[]
@@ -39,6 +40,11 @@ interface State {
   joinRoom(roomId: string): void
   act(action: unknown): void
   startGame(): void
+  look(): void
+  callBet(): void
+  raiseTo(to: number): void
+  foldHand(): void
+  compareWith(targetId: string): void
 }
 
 const api = new ApiClient('')
@@ -72,6 +78,7 @@ export const useStore = create<State>((set, get) => {
   user: null,
   netWorth: null,
   roomId: null,
+  gameId: null,
   ownerId: null,
   started: false,
   seats: [],
@@ -81,7 +88,7 @@ export const useStore = create<State>((set, get) => {
 
   reset() {
     set({
-      user: null, netWorth: null, roomId: null, ownerId: null, started: false, seats: [],
+      user: null, netWorth: null, roomId: null, gameId: null, ownerId: null, started: false, seats: [],
       view: null, lastSettlement: null, error: null,
     })
   },
@@ -94,6 +101,7 @@ export const useStore = create<State>((set, get) => {
       case 'roomState':
         set({
           roomId: msg.roomId || null,
+          gameId: msg.gameId || null,
           ownerId: msg.ownerId || null,
           started: msg.started,
           seats: msg.seats,
@@ -174,6 +182,26 @@ export const useStore = create<State>((set, get) => {
 
   startGame() {
     get().socket?.send({ t: 'start' })
+  },
+
+  look() {
+    get().act({ type: 'look' })
+  },
+
+  callBet() {
+    get().act({ type: 'call' })
+  },
+
+  raiseTo(to) {
+    get().act({ type: 'raise', to })
+  },
+
+  foldHand() {
+    get().act({ type: 'fold' })
+  },
+
+  compareWith(targetId) {
+    get().act({ type: 'compare', targetId })
   },
   }
 })
