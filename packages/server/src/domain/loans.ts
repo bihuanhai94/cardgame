@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { postTransaction, getBalance, userAccount } from './ledger.js'
+import { postTransaction, getBalance, userAccount, withTransaction } from './ledger.js'
 import { areFriends } from './friends.js'
 
 export const LOAN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
@@ -64,20 +64,25 @@ export function createLoan(
   if (getBalance(db, userAccount(lender)) < amount) throw new Error('债权人余额不足')
 
   const id = randomUUID()
-  db.prepare(
-    `INSERT INTO loans (id, lender, borrower, principal, repaid, status, created_at)
-     VALUES (?,?,?,?,0,'open',?)`,
-  ).run(id, lender, borrower, amount, now)
 
-  postTransaction(
-    db,
-    [
-      { account: userAccount(lender), delta: -amount },
-      { account: userAccount(borrower), delta: amount },
-    ],
-    'loan_create',
-    id,
-  )
+  // 借条行与账本过账必须原子：否则崩溃窗口会留下与账本对不上的借条，
+  // 而全局零和校验查不出这种不一致（账本本身仍是平的）。
+  withTransaction(db, () => {
+    db.prepare(
+      `INSERT INTO loans (id, lender, borrower, principal, repaid, status, created_at)
+       VALUES (?,?,?,?,0,'open',?)`,
+    ).run(id, lender, borrower, amount, now)
+
+    postTransaction(
+      db,
+      [
+        { account: userAccount(lender), delta: -amount },
+        { account: userAccount(borrower), delta: amount },
+      ],
+      'loan_create',
+      id,
+    )
+  })
 
   return toLoan(
     db.prepare('SELECT * FROM loans WHERE id = ?').get(id) as LoanRow,
@@ -103,18 +108,20 @@ export function repayLoan(
   const repaid = row.repaid + amount
   const status = repaid >= row.principal ? 'settled' : 'open'
 
-  db.prepare('UPDATE loans SET repaid = ?, status = ?, settled_at = ? WHERE id = ?')
-    .run(repaid, status, status === 'settled' ? Date.now() : null, loanId)
+  withTransaction(db, () => {
+    db.prepare('UPDATE loans SET repaid = ?, status = ?, settled_at = ? WHERE id = ?')
+      .run(repaid, status, status === 'settled' ? Date.now() : null, loanId)
 
-  postTransaction(
-    db,
-    [
-      { account: userAccount(row.borrower), delta: -amount },
-      { account: userAccount(row.lender), delta: amount },
-    ],
-    'loan_repay',
-    loanId,
-  )
+    postTransaction(
+      db,
+      [
+        { account: userAccount(row.borrower), delta: -amount },
+        { account: userAccount(row.lender), delta: amount },
+      ],
+      'loan_repay',
+      loanId,
+    )
+  })
 
   return toLoan(db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId) as LoanRow)
 }

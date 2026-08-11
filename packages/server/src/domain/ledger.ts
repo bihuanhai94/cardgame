@@ -12,6 +12,29 @@ export interface PostingLine {
   delta: number
 }
 
+let savepointSeq = 0
+
+/**
+ * 在一个原子单元内执行 fn。
+ *
+ * 用 SAVEPOINT 而非 BEGIN：最外层的 SAVEPOINT 行为等同于事务，嵌套时则成为
+ * 子事务。这样调用方无需知道自己是否已处在事务中，账务写入与业务表写入
+ * 可以被调用方包成一个原子单元（借条、对局结算都依赖这一点）。
+ */
+export function withTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  const name = `sp_${savepointSeq++}`
+  db.exec(`SAVEPOINT ${name}`)
+  try {
+    const result = fn()
+    db.exec(`RELEASE ${name}`)
+    return result
+  } catch (err) {
+    db.exec(`ROLLBACK TO ${name}`)
+    db.exec(`RELEASE ${name}`)
+    throw err
+  }
+}
+
 /**
  * 过账。校验零和后在单个事务内写入全部流水。
  * 任一校验失败则抛异常且不留下任何记录。
@@ -34,14 +57,9 @@ export function postTransaction(
   const stmt = db.prepare(
     'INSERT INTO ledger_entries (txn_id, account, delta, reason, ref_id, created_at) VALUES (?,?,?,?,?,?)',
   )
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     for (const l of lines) stmt.run(txnId, l.account, l.delta, reason, refId, now)
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  })
   return txnId
 }
 

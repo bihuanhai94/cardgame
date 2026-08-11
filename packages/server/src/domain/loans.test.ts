@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { openTestDb } from '../db/open.js'
 import { createInviteCode, registerUser, INITIAL_GRANT } from './users.js'
 import { sendFriendRequest, acceptFriendRequest } from './friends.js'
-import { getBalance, userAccount, checkGlobalInvariant } from './ledger.js'
+import { getBalance, userAccount, checkGlobalInvariant, withTransaction } from './ledger.js'
 import { createLoan, repayLoan, listLoans, netWorth, autoRepay, LOAN_COOLDOWN_MS } from './loans.js'
 
 const OLD = Date.now() + LOAN_COOLDOWN_MS + 1000
@@ -216,5 +216,33 @@ describe('autoRepay', () => {
   it('无欠款时返回 0', () => {
     const { db, c } = setup()
     expect(autoRepay(db, c.id)).toBe(0)
+  })
+})
+
+describe('transaction atomicity', () => {
+  it('借条与账本过账必须原子：失败后两个表都无变化', () => {
+    const { db, a, b } = setup()
+    const beforeLoanCount = (db.prepare('SELECT COUNT(*) as cnt FROM loans').get() as { cnt: number }).cnt
+    const beforeEntryCount = (db.prepare('SELECT COUNT(*) as cnt FROM ledger_entries').get() as { cnt: number }).cnt
+
+    // Try to create a loan but force failure after the loan row insert
+    try {
+      withTransaction(db, () => {
+        createLoan(db, a.id, b.id, 1000, OLD)
+        throw new Error('simulated crash after loan insert')
+      })
+    } catch (e) {
+      // Expect the error we threw
+      expect((e as Error).message).toBe('simulated crash after loan insert')
+    }
+
+    // Both tables should be unchanged
+    const afterLoanCount = (db.prepare('SELECT COUNT(*) as cnt FROM loans').get() as { cnt: number }).cnt
+    const afterEntryCount = (db.prepare('SELECT COUNT(*) as cnt FROM ledger_entries').get() as { cnt: number }).cnt
+    expect(afterLoanCount).toBe(beforeLoanCount)
+    expect(afterEntryCount).toBe(beforeEntryCount)
+
+    // Ledger still balances
+    expect(checkGlobalInvariant(db).ok).toBe(true)
   })
 })
