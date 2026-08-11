@@ -481,4 +481,60 @@ describe('attachGateway 广播（真实两连接）', () => {
     gw.close()
     server.close()
   })
+
+  it('掉线座位由网关的超时轮询自动代打，推进对局直至结算', async () => {
+    const { db, rooms, mk } = boot()
+    const a = mk('甲')
+    const b = mk('乙')
+    const room = rooms.create({
+      gameId: 'zhajinhua',
+      ownerId: a.user.id,
+      seats: 2,
+      options: { ante: 10, maxRounds: 5 },
+    })
+
+    const server = http.createServer()
+    // 轮询间隔调到很短，测试不必等真实的 20 秒超时——掉线座位本就无需等超时，立即代打
+    const gw = attachGateway(server, { db, rooms, timeoutPollMs: 20 })
+    await new Promise<void>((resolve) => server.listen(0, resolve))
+    const addr = server.address()
+    const port = typeof addr === 'object' && addr ? addr.port : 0
+
+    const wsA = new WsClient(`ws://127.0.0.1:${port}/ws`)
+    const wsB = new WsClient(`ws://127.0.0.1:${port}/ws`)
+    await Promise.all([
+      new Promise((r) => wsA.on('open', r)),
+      new Promise((r) => wsB.on('open', r)),
+    ])
+
+    wsA.send(JSON.stringify({ t: 'auth', token: a.token }))
+    wsB.send(JSON.stringify({ t: 'auth', token: b.token }))
+    await wait(wsA, (m) => (m.t === 'authOk' ? true : undefined))
+    await wait(wsB, (m) => (m.t === 'authOk' ? true : undefined))
+
+    wsA.send(JSON.stringify({ t: 'join', roomId: room.id }))
+    await wait(wsA, (m) => (m.t === 'roomState' ? true : undefined))
+    wsB.send(JSON.stringify({ t: 'join', roomId: room.id }))
+    await wait(wsB, (m) => (m.t === 'roomState' ? true : undefined))
+
+    wsA.send(JSON.stringify({ t: 'start' }))
+    await wait(wsA, (m) => (m.t === 'gameView' ? true : undefined))
+
+    // 两人都显式离开（对局中 leave() 标记 isAi + 离线）：不必等真实 20 秒，
+    // 网关的超时轮询应当立即接管双方直至对局结束。
+    room.leave(a.user.id)
+    room.leave(b.user.id)
+
+    const deadline = Date.now() + 5000
+    while (room.isStarted() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    expect(room.isStarted()).toBe(false)
+    expect(checkGlobalInvariant(db).ok).toBe(true)
+
+    wsA.close()
+    wsB.close()
+    gw.close()
+    server.close()
+  })
 })

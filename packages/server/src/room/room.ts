@@ -4,6 +4,11 @@ import { assertZeroSum, type GameEvent, type SeatInfo } from '@cardgame/shared'
 import { getEngine } from './registry.js'
 import { postTransaction, userAccount, withTransaction } from '../domain/ledger.js'
 import { autoRepay } from '../domain/loans.js'
+import { zhajinhua, type ZjhState } from '../games/zhajinhua.js'
+import { decideZjh, type ZjhAiView } from '../ai/zhajinhua.js'
+
+/** 一个座位在轮到它之后，仍未行动就被判定超时、由 AI 代打的等待时长。 */
+export const TIMEOUT_MS = 20_000
 
 interface Seat {
   index: number
@@ -28,6 +33,8 @@ export interface RoomOpts {
   seats: number
   options: Record<string, unknown>
   seedSource?: () => number
+  /** 时钟注入点，供测试模拟时间流逝；默认 Date.now。计时器本身不测试引擎/AI 的纯度，只测这里。 */
+  now?: () => number
 }
 
 export class Room {
@@ -44,6 +51,10 @@ export class Room {
   private actions: { playerId: string; action: unknown }[] = []
   private pendingSettlement: SettlementRecord | null = null
   private nicknames = new Map<string, string>()
+  private clock: () => number
+  /** 当前这批「有合法动作可做」的玩家从何时开始等待——用于超时判定，与游戏内部时钟无关。 */
+  private turnStartedAt = 0
+  private lastActors: string[] = []
 
   constructor(opts: RoomOpts) {
     this.id = opts.id
@@ -51,6 +62,7 @@ export class Room {
     this.ownerId = opts.ownerId
     this.options = opts.options
     this.seedSource = opts.seedSource ?? (() => randomInt(0, 2 ** 31 - 1))
+    this.clock = opts.now ?? Date.now
     this.seatList = Array.from({ length: opts.seats }, (_, index) => ({
       index,
       userId: null,
@@ -112,6 +124,8 @@ export class Room {
     this.started = true
     this.actions = []
     this.pendingSettlement = null
+    this.lastActors = []
+    this.refreshTurnTimer()
   }
 
   act(userId: string, action: unknown): { events: GameEvent[] } {
@@ -123,6 +137,7 @@ export class Room {
     const result = engine.apply(this.state, userId, action)
     this.state = result.state
     this.actions.push({ playerId: userId, action })
+    this.refreshTurnTimer()
 
     if (engine.isOver(this.state)) {
       const settlement = engine.settle(this.state)
@@ -145,6 +160,59 @@ export class Room {
     const rec = this.pendingSettlement
     this.pendingSettlement = null
     return rec
+  }
+
+  /** 当前「有合法动作可做」的玩家列表——按此判定轮到谁，跨玩法通用，不依赖 turn 字段。 */
+  private currentActors(): string[] {
+    if (!this.started) return []
+    const engine = getEngine(this.gameId)
+    return this.players().filter((p) => engine.legalActions(this.state, p).length > 0)
+  }
+
+  /** 谁在等待行动这件事一旦变化（换人、或从无到有/有到无），就重置计时起点。 */
+  private refreshTurnTimer(): void {
+    const actors = this.currentActors()
+    const changed =
+      actors.length !== this.lastActors.length || actors.some((a, i) => a !== this.lastActors[i])
+    if (changed) {
+      this.lastActors = actors
+      this.turnStartedAt = this.clock()
+    }
+  }
+
+  /**
+   * 是否有座位该被代打了，返回其 userId；没有则返回 null。
+   * 掉线（isAi）座位立即算作待代打，不必等 20 秒——它反正不会自己响应。
+   * 在线座位则要等 `now - turnStartedAt >= TIMEOUT_MS`。
+   * 纯粹依据已记录的状态与传入的 `now` 判断，不读真实时钟，可重复回放。
+   */
+  dueForTimeout(now: number): string | null {
+    if (!this.started) return null
+    const actors = this.currentActors()
+    if (actors.length === 0) return null
+    for (const p of actors) {
+      const seat = this.seatList.find((s) => s.userId === p)
+      if (seat?.isAi) return p
+    }
+    if (now - this.turnStartedAt >= TIMEOUT_MS) return actors[0]!
+    return null
+  }
+
+  /**
+   * 用规则型 AI 代打一步：取该玩家能看到的裁剪视图，交给 decideZjh 决策，再照常 act()。
+   * 若该玩家此刻没有合法动作（不是轮到它），或本局玩法尚无 AI 支持，返回 null 而不抛错——
+   * 调用方（超时轮询/托管入口）不必先判断是否轮到谁。
+   */
+  autoAct(userId: string): { events: GameEvent[] } | null {
+    if (!this.started) return null
+    const engine = getEngine(this.gameId)
+    if (engine.legalActions(this.state, userId).length === 0) return null
+    if (this.gameId !== zhajinhua.id) return null
+
+    const view = engine.view(this.state, userId)
+    const minRaise = (this.state as ZjhState).bet.minRaise
+    const action = decideZjh(view as ZjhAiView, userId, { minRaise })
+    return this.act(userId, action)
   }
 
   viewFor(userId: string | null): unknown {

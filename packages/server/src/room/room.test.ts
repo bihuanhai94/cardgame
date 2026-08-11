@@ -6,9 +6,13 @@ import { sendFriendRequest, acceptFriendRequest } from '../domain/friends.js'
 import { createLoan, listLoans, LOAN_COOLDOWN_MS } from '../domain/loans.js'
 import { registerEngine } from './registry.js'
 import { highCard } from '../games/highcard.js'
-import { Room, RoomManager, settleToLedger } from './room.js'
+import { zhajinhua } from '../games/zhajinhua.js'
+import { Room, RoomManager, settleToLedger, TIMEOUT_MS } from './room.js'
 
-beforeAll(() => registerEngine(highCard))
+beforeAll(() => {
+  registerEngine(highCard)
+  registerEngine(zhajinhua)
+})
 
 function makeRoom(seats = 3) {
   return new Room({
@@ -273,5 +277,112 @@ describe('RoomManager', () => {
     mgr.create({ gameId: 'highcard', ownerId: 'a', seats: 3, options: {} })
     mgr.create({ gameId: 'highcard', ownerId: 'b', seats: 3, options: {} })
     expect(mgr.list()).toHaveLength(2)
+  })
+})
+
+describe('Room 炸金花托管：autoAct 与超时', () => {
+  function makeZjhRoom(now: () => number) {
+    return new Room({
+      id: 'Z1',
+      gameId: 'zhajinhua',
+      ownerId: 'a',
+      seats: 3,
+      options: { ante: 100, maxRounds: 10 },
+      seedSource: () => 42,
+      now,
+    })
+  }
+
+  it('轮到某人时其他人的 dueForTimeout 不会触发', () => {
+    let t = 0
+    const room = makeZjhRoom(() => t)
+    room.sit('a'); room.sit('b'); room.sit('c')
+    room.start()
+    t += TIMEOUT_MS + 1000
+    const due = room.dueForTimeout(t)
+    const v = room.viewFor(null) as { turn: string | null }
+    expect(due).toBe(v.turn)
+  })
+
+  it('未超过 20 秒不触发超时', () => {
+    let t = 0
+    const room = makeZjhRoom(() => t)
+    room.sit('a'); room.sit('b'); room.sit('c')
+    room.start()
+    t += TIMEOUT_MS - 1000
+    expect(room.dueForTimeout(t)).toBeNull()
+  })
+
+  it('autoAct 让 AI 代打一步并推进对局', () => {
+    let t = 0
+    const room = makeZjhRoom(() => t)
+    room.sit('a'); room.sit('b'); room.sit('c')
+    room.start()
+    const before = room.viewFor(null) as { turn: string | null }
+    const result = room.autoAct(before.turn!)
+    expect(result).not.toBeNull()
+    const after = room.viewFor(null) as { turn: string | null }
+    // 代打后行动权应当已经推进（离开了原来那个人，或者原地进入了看牌后的下一步）
+    expect(after).not.toEqual(before)
+  })
+
+  it('超时后由 autoAct 代打，动作合法且不再卡在原地', () => {
+    let t = 0
+    const room = makeZjhRoom(() => t)
+    room.sit('a'); room.sit('b'); room.sit('c')
+    room.start()
+    t += TIMEOUT_MS + 1000
+    const userId = room.dueForTimeout(t)!
+    expect(() => room.autoAct(userId)).not.toThrow()
+  })
+
+  it('掉线（isAi）座位立刻被判定为待代打，不需要等 20 秒', () => {
+    let t = 0
+    const room = makeZjhRoom(() => t)
+    room.sit('a'); room.sit('b'); room.sit('c')
+    room.start()
+    const turn = (room.viewFor(null) as { turn: string | null }).turn!
+    room.leave(turn) // 对局中 leave 标记 isAi
+    expect(room.dueForTimeout(t)).toBe(turn)
+  })
+
+  it('全程随机掉线的炸金花对局仍能在有限步内结束（fuzz + 随机掉线）', () => {
+    const players = ['a', 'b', 'c']
+    let seed = 1
+    for (let game = 0; game < 500; game++) {
+      let t = 0
+      const room = new Room({
+        id: `F${game}`,
+        gameId: 'zhajinhua',
+        ownerId: 'a',
+        seats: 3,
+        options: { ante: 100, maxRounds: 10 },
+        seedSource: () => seed++,
+        now: () => t,
+      })
+      for (const p of players) room.sit(p)
+      room.start()
+
+      let steps = 0
+      const maxSteps = 200
+      while (room.isStarted()) {
+        if (steps++ >= maxSteps) {
+          throw new Error(`第 ${game} 局死锁：超过 ${maxSteps} 步仍未结束`)
+        }
+        // 每步都有一定概率把当前行动者标记为掉线，之后交给 autoAct 接管
+        const turn = (room.viewFor(null) as { turn: string | null }).turn
+        if (turn && Math.random() < 0.3) {
+          room.leave(turn)
+        }
+        const due = room.dueForTimeout(t)
+        if (due) {
+          room.autoAct(due)
+        } else if (turn) {
+          // 无人掉线也没超时：随便用 autoAct 代打推进（等价于一次合法随机动作）
+          t += TIMEOUT_MS + 1000
+        }
+      }
+      expect(room.isStarted()).toBe(false)
+    }
   })
 })

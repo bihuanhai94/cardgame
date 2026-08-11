@@ -145,12 +145,12 @@ export function renderBroadcast(
 
 export function attachGateway(
   server: http.Server,
-  deps: { db: DatabaseSync; rooms: RoomManager },
+  deps: { db: DatabaseSync; rooms: RoomManager; timeoutPollMs?: number },
 ): { close(): void } {
   const wss = new WebSocketServer({ server, path: '/ws' })
   const conns = new Map<WebSocket, ConnCtx>()
 
-  const broadcast = (roomId: string, except: WebSocket, extra?: ServerMessage): void => {
+  const broadcast = (roomId: string, except: WebSocket | null, extra?: ServerMessage): void => {
     const room = deps.rooms.get(roomId)
     if (!room) return
     const targets: [WebSocket, ConnCtx][] = []
@@ -165,6 +165,35 @@ export function attachGateway(
       if (extra) sock.send(JSON.stringify(extra))
     })
   }
+
+  /**
+   * 超时/托管轮询：每个 tick 检查所有房间，谁该被代打就代打一步。
+   * 用真实时钟驱动，但判定逻辑全部在 Room.dueForTimeout/autoAct 里——那两个
+   * 方法接受注入的 now，可以脱离真实时间单独测试；这里只是按固定节奏调用它们。
+   */
+  const timeoutTick = (): void => {
+    for (const room of deps.rooms.list()) {
+      if (!room.isStarted()) continue
+      const userId = room.dueForTimeout(Date.now())
+      if (!userId) continue
+
+      let result: { events: unknown } | null
+      try {
+        result = room.autoAct(userId)
+      } catch {
+        continue
+      }
+      if (!result) continue
+
+      broadcast(room.id, null)
+      const settlement = room.takeSettlement()
+      if (settlement) {
+        settleToLedger(deps.db, settlement)
+        broadcast(room.id, null, { t: 'settled', deltas: settlement.deltas })
+      }
+    }
+  }
+  const timer = setInterval(timeoutTick, deps.timeoutPollMs ?? 1000)
 
   wss.on('connection', (sock) => {
     const ctx: ConnCtx = { db: deps.db, rooms: deps.rooms, userId: null, roomId: null }
@@ -194,5 +223,10 @@ export function attachGateway(
     })
   })
 
-  return { close: () => wss.close() }
+  return {
+    close: () => {
+      clearInterval(timer)
+      wss.close()
+    },
+  }
 }
