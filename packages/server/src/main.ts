@@ -3,6 +3,7 @@ import { buildApp } from './http/routes.js'
 import { RoomManager } from './room/room.js'
 import { registerEngine } from './room/registry.js'
 import { highCard } from './games/highcard.js'
+import { zhajinhua } from './games/zhajinhua.js'
 import { attachGateway } from './ws/gateway.js'
 import { checkGlobalInvariant } from './domain/ledger.js'
 
@@ -19,6 +20,7 @@ if (!invariant.ok) {
 }
 
 registerEngine(highCard)
+registerEngine(zhajinhua)
 
 const rooms = new RoomManager()
 const app = buildApp({ db, rooms })
