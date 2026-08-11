@@ -268,6 +268,9 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
       currentBet: state.bet.currentBet,
       compares: state.compares,
       hands,
+      // 各家本轮已投入 —— 下注额在牌桌上是公开信息，
+      // 不看到它就无法判断该不该跟。裁剪边界管的是牌，不是钱。
+      committed: Object.fromEntries(state.bet.seats.map((s) => [s.id, s.committed])),
     }
   },
 }

@@ -382,6 +382,33 @@ describe('视图裁剪', () => {
     const v = zhajinhua.view(s, null) as { hands: Record<string, unknown> }
     expect(Object.keys(v.hands)).toEqual(['c'])
   })
+
+  it('下注额对所有人公开：未看牌的玩家、以及观战者（viewerId=null）都能看到每一家的 committed', () => {
+    const s = zhajinhua.init(ctx) // 无人看牌
+    const asUnlooked = zhajinhua.view(s, 'a') as { committed: Record<string, number> }
+    const asSpectator = zhajinhua.view(s, null) as { committed: Record<string, number> }
+    for (const v of [asUnlooked, asSpectator]) {
+      expect(Object.keys(v.committed).sort()).toEqual(['a', 'b', 'c'])
+      for (const p of ctx.players) expect(typeof v.committed[p]).toBe('number')
+    }
+  })
+
+  it('committed 会随下注实时反映每一家的投入，而不是恒为底注', () => {
+    let s = zhajinhua.init(ctx)
+    s = act(s, 'a', { type: 'look' })
+    s = act(s, 'a', { type: 'raise', to: 300 })
+    const v = zhajinhua.view(s, 'b') as { committed: Record<string, number> }
+    expect(v.committed['a']).toBe(300)
+  })
+
+  it('新增的 committed 字段不会打开牌面泄漏：序列化后的 view 仍不含他人牌面', () => {
+    const s = act(zhajinhua.init(ctx), 'a', { type: 'look' })
+    const json = JSON.stringify(zhajinhua.view(s, 'a'))
+    const bCard = JSON.stringify(s.hands['b']![0])
+    expect(json.includes(bCard)).toBe(false)
+    // committed 字段本身确实序列化出来了，不是被意外裁掉
+    expect(json.includes('"committed"')).toBe(true)
+  })
 })
 
 describe('引擎注册表', () => {

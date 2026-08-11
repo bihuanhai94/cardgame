@@ -23,6 +23,7 @@ function baseView(overrides: Partial<ZjhView> = {}): ZjhView {
     currentBet: 100,
     compares: [],
     hands: {},
+    committed: { [ME]: 100, [OPP1]: 100, [OPP2]: 100 },
     ...overrides,
   }
 }
@@ -150,6 +151,20 @@ describe('TableZjh：比牌选人', () => {
   it('未看牌时不显示比牌按钮', () => {
     setup(baseView({ turn: ME, looked: [] }))
     expect(screen.queryByRole('button', { name: '比牌' })).toBeNull()
+  })
+})
+
+describe('TableZjh：下注展示（下注额是公开信息）', () => {
+  it('本轮已投入非零的座位显示下注额，投入为零的座位不显示', () => {
+    setup(baseView({ committed: { [ME]: 100, [OPP1]: 0, [OPP2]: 300 } }))
+    // OPP2 投入 300 -> 显示
+    expect(screen.getByText('300')).toBeTruthy()
+    // OPP1 投入 0 -> 不应该出现一个 "0" 的下注展示（bet-area 组件在 amount<=0 时不渲染）
+    const betAreas = document.querySelectorAll('.bet-area')
+    const texts = Array.from(betAreas).map((el) => el.textContent)
+    expect(texts).not.toContain('0')
+    expect(texts).toContain('300')
+    expect(texts).toContain('100')
   })
 })
 

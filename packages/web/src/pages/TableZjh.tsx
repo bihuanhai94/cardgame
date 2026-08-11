@@ -5,6 +5,7 @@ import { ChipHeap, type ChipHeapHandle } from '../ui/chips/ChipHeap.js'
 import { breakdown } from '../ui/chips/denoms.js'
 import { useRollup } from '../ui/useRollup.js'
 import { Seat } from '../table/Seat.js'
+import { BetArea } from '../table/BetArea.js'
 import { ActionBar } from '../table/ActionBar.js'
 import { SFX } from '../sfx/index.js'
 import type { Card } from '@cardgame/shared'
@@ -28,6 +29,8 @@ export interface ZjhView {
   currentBet: number
   compares: Array<{ from: string; to: string; winner: string }>
   hands: Record<string, Card[]>
+  /** 各家本轮已投入——下注额是牌桌上的公开信息，所有 viewer（含未看牌者、观战者）都能看到。 */
+  committed: Record<string, number>
 }
 
 /** 音效环境可能完全没有 WebAudio（jsdom、部分浏览器）；音效永远不该让交互崩溃。 */
@@ -124,26 +127,31 @@ export function TableZjh({ onLeave }: { onLeave: () => void }) {
 
       <div className="flex flex-wrap justify-center gap-4">
         {opponents.map((id) => (
-          <Seat
-            key={id}
-            id={id}
-            nickname={nicknameOf(id)}
-            isTurn={v.turn === id}
-            folded={v.folded.includes(id)}
-            looked={v.looked.includes(id)}
-            cards={v.hands[id]}
-            selectable={compareMode ? eligibleTargets.has(id) : undefined}
-            onSelect={compareMode ? handleSelectTarget : undefined}
-          />
+          <div key={id} className="flex flex-col items-center gap-1">
+            <Seat
+              id={id}
+              nickname={nicknameOf(id)}
+              isTurn={v.turn === id}
+              folded={v.folded.includes(id)}
+              looked={v.looked.includes(id)}
+              cards={v.hands[id]}
+              selectable={compareMode ? eligibleTargets.has(id) : undefined}
+              onSelect={compareMode ? handleSelectTarget : undefined}
+            />
+            <BetArea amount={v.committed[id] ?? 0} />
+          </div>
         ))}
       </div>
 
-      <div className="own mx-auto flex gap-2">
-        {myFolded
-          ? null
-          : iLooked
-            ? (v.hands[user.id] ?? [null, null, null]).map((c, i) => <CardView key={i} card={c} width={54} />)
-            : [0, 1, 2].map((i) => <CardView key={i} card={null} width={54} />)}
+      <div className="own mx-auto flex flex-col items-center gap-1">
+        <div className="flex gap-2">
+          {myFolded
+            ? null
+            : iLooked
+              ? (v.hands[user.id] ?? [null, null, null]).map((c, i) => <CardView key={i} card={c} width={54} />)
+              : [0, 1, 2].map((i) => <CardView key={i} card={null} width={54} />)}
+        </div>
+        <BetArea amount={v.committed[user.id] ?? 0} />
       </div>
 
       <ActionBar

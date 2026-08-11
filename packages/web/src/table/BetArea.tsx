@@ -1,13 +1,13 @@
 /**
- * 座位与桌心之间的下注提示。引擎的 view 并不下发每位玩家本轮已投入的具体筹码数
- * （那是 apply/settle 内部账本，不是 redaction 边界要暴露的东西），所以这里只能
- * 呈现 view 里真实有的信息：轮到该玩家时，他这一手要跟注多少。
+ * 座位与桌心之间的下注展示。下注额在牌桌上是公开信息——引擎 view() 现在
+ * 下发每一家本轮的 committed（裁剪边界管的是牌，不是钱）——所以这里可以
+ * 如实按 demo.html 的 bet-area 位置放一小摞筹码 + 数字。
  */
-export function BetArea({ active, amountToCall }: { active: boolean; amountToCall: number }) {
-  if (!active) return null
+export function BetArea({ amount }: { amount: number }) {
+  if (amount <= 0) return null
   return (
     <div className="bet-area rounded-full bg-black/40 px-2 py-0.5 text-[10px] text-amber-200">
-      跟注 {amountToCall}
+      {amount}
     </div>
   )
 }
