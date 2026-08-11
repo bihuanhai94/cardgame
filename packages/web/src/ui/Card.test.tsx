@@ -56,4 +56,26 @@ describe('CardView', () => {
     const { container } = render(<CardView card={{ suit: 's', rank: 14 }} />)
     expect(container.querySelector('img')).toBeNull()
   })
+
+  it('牌背含菱形网格花纹，且不含 img 或 data: URI', () => {
+    const { container } = render(<CardView card={null} />)
+    const paths = container.querySelectorAll('svg path')
+    // the lattice is drawn as a series of crossing diagonal <path> lines
+    // clipped inside the border, plus the centre emblem diamond paths
+    expect(paths.length).toBeGreaterThan(4)
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.innerHTML).not.toContain('data:')
+  })
+
+  it('牌背不含任何点数或花色文字（回归：牌背绝不能泄漏牌面）', () => {
+    const { container } = render(<CardView card={null} />)
+    expect(container.querySelector('text')).toBeNull()
+    expect(container.textContent).toBe('')
+    for (const glyph of ['♠', '♥', '♦', '♣', '王']) {
+      expect(container.innerHTML).not.toContain(glyph)
+    }
+    for (const rank of ['A', 'K', 'Q', 'J']) {
+      expect(container.innerHTML).not.toContain(`>${rank}<`)
+    }
+  })
 })
