@@ -1218,6 +1218,73 @@ git commit -m "test: 炸金花端到端脚本与真机验证清单"
 
 ---
 
+### Task 12: 房间选项硬化（审查发现的补漏）
+
+**背景：** Task 6 的审查指出，`POST /api/rooms` 的 `options` 是**客户端直接影响账本的一条路径**，而当前只在引擎里做了 `typeof === 'number'` 检查。三种取值会造成真实后果，且都是"手滑填错"就能触发的：
+
+| 取值 | 后果 |
+|---|---|
+| `ante` 为负 | 底池为负，赢家实际在赔钱 |
+| `ante` 为小数 | 结算时账本拒收非整数，房间在结算那一刻卡死 |
+| `maxRounds: 0` | 开局即封顶，全场只能弃牌或比牌 |
+
+**Files:**
+- Modify: `packages/server/src/games/zhajinhua.ts`（`init` 校验）
+- Modify: `packages/server/src/http/routes.ts`（建房前拒绝明显非法的选项）
+- Test: `packages/server/src/games/zhajinhua.test.ts`
+- Test: `packages/server/src/http/routes.test.ts`
+
+**Interfaces:**
+- Produces: `zhajinhua.init` 对非法 options 抛出中文错误；`POST /api/rooms` 对非法 options 返回 400
+
+- [ ] **Step 1: 写失败测试**
+
+引擎侧：
+
+```ts
+describe('options 校验', () => {
+  const mk = (options: Record<string, unknown>) =>
+    () => zhajinhua.init({ seed: 1, players: ['a', 'b'], options })
+
+  it('拒绝非正整数底注', () => {
+    expect(mk({ ante: 0 })).toThrow(/底注/)
+    expect(mk({ ante: -100 })).toThrow(/底注/)
+    expect(mk({ ante: 10.5 })).toThrow(/底注/)
+  })
+
+  it('拒绝小于 1 的封顶轮数', () => {
+    expect(mk({ ante: 100, maxRounds: 0 })).toThrow(/封顶/)
+    expect(mk({ ante: 100, maxRounds: -1 })).toThrow(/封顶/)
+    expect(mk({ ante: 100, maxRounds: 2.5 })).toThrow(/封顶/)
+  })
+
+  it('缺省值仍然可用', () => {
+    expect(() => zhajinhua.init({ seed: 1, players: ['a', 'b'], options: {} })).not.toThrow()
+  })
+})
+```
+
+HTTP 侧：断言 `POST /api/rooms` 携带 `{ante: -100}` 时返回 400，且**房间未被创建**（`GET /api/rooms` 数量不变）——只返回错误但留下孤儿房间同样是缺陷。
+
+- [ ] **Step 2: 确认失败** → `pnpm test`
+
+- [ ] **Step 3: 实现**
+
+引擎 `init` 开头校验：`ante` 必须是正整数，`maxRounds` 必须是 ≥1 的整数；缺省时用默认值（`ante` 100、`maxRounds` 10）。错误信息用中文，与全仓风格一致。
+
+路由侧在 `getEngine(gameId)` 之后、`rooms.create` 之前做同样的校验，使非法请求在**任何状态被创建之前**就被拒绝。两处校验共用一个导出的校验函数，避免又出现"同一规则两份拷贝"。
+
+- [ ] **Step 4: 确认通过并跑 fuzz** → `pnpm test` ×3；`pnpm fuzz zhajinhua 20000`
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add -A
+git commit -m "fix(server): 房间选项校验，拒绝负数/小数底注与非法封顶轮数"
+```
+
+---
+
 ## 完成标准
 
 1. `pnpm test` 全绿；`npx tsc -b` 零错误
@@ -1226,6 +1293,7 @@ git commit -m "test: 炸金花端到端脚本与真机验证清单"
 4. 端到端脚本跑通一局含比牌的炸金花，净资产守恒、账本零和成立
 5. 真机验证清单人工确认通过
 6. 0 期已有的 241 个测试全部仍通过
+7. 房间选项校验到位：负数/小数底注与 `maxRounds < 1` 均在建房时被拒，且不留下孤儿房间
 
 ## 下一步
 
