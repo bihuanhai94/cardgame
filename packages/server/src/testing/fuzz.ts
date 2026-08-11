@@ -22,7 +22,8 @@ export interface FuzzOpts {
  * 1. 结算总和为 0
  * 2. 无非法动作被接受
  * 3. 无死锁（有限步内结束）
- * 另可选检查视图裁剪是否泄漏他人信息。
+ * 另可选检查视图裁剪是否泄漏他人信息——只在对局进行中检查（!engine.isOver），
+ * 终局摊牌是引擎的正当行为，不应被计为泄漏。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResult {
@@ -82,17 +83,6 @@ export function fuzzEngine<S, A>(engine: Engine<S, A>, opts: FuzzOpts): FuzzResu
     }
 
     assertZeroSum(engine.settle(state))
-
-    // Check for view leaks in terminal state (settlement view not checked in loop)
-    if (opts.secretProbe && opts.secretOwner) {
-      for (const viewer of [...opts.players, null]) {
-        if (viewer === opts.secretOwner) continue
-        const json = JSON.stringify(engine.view(state, viewer))
-        if (json.includes(opts.secretProbe)) {
-          throw new Error(`第 ${round} 局视图泄漏：${viewer ?? '观战者'} 看到了他人信息`)
-        }
-      }
-    }
   }
 
   return { rounds: opts.rounds, actions: actionCount }
