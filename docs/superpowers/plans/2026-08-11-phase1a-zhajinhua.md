@@ -19,7 +19,7 @@
 - **筹码本体绝不做 2D 旋转**；**底池累积而非按总额重算**；**底池只追加 DOM 节点**；**筹码落点只依赖自身序号**。（详见 `docs/design/table-ui/README.md`）
 - **音效全部 WebAudio 合成**，不加载音频文件。**牌面牌背一律 SVG**，禁止位图。
 - 首屏 gzip **≤ 300KB**；玩法代码按需加载。
-- 炸金花规则以 `docs/superpowers/specs/2026-08-11-phase1-design.md` §3 为准：闷注 = 明注一半；看牌后才可比牌；封顶 10 轮；花色决胜序 **黑桃 > 红桃 > 梅花 > 方块**。
+- 炸金花规则以 `docs/superpowers/specs/2026-08-11-phase1-design.md` §3 为准（**国际标准**）：**顺子 > 金花**；闷注 = 明注一半；看牌后才可比牌；封顶 10 轮；**不用花色决胜，比牌平局时发起方判负**。
 - 超时 **20 秒**，超时自动弃牌（可免费过牌时自动过牌）。
 
 **关于本计划的代码密度：** 正确性关键的模块（牌力、下注轮、引擎状态机、校验器）给出完整实现代码。UI 任务的权威参考是 `docs/design/table-ui/` 里已验证的实现，计划给出组件划分与接线契约，不重复粘贴 500 行样式——那些文件本身就是规格。每个任务的**测试用例是行为契约**，实现必须让它们通过。
@@ -233,9 +233,9 @@ git commit -m "refactor(engine): 动作校验改用 isLegal 取代枚举比对"
   - `type ThreeCategory = 'high' | 'pair' | 'straight' | 'flush' | 'straightFlush' | 'trips'`
   - `interface ThreeEval { category: ThreeCategory; score: number; cards: Card[] }`
   - `function evalThree(cards: readonly Card[]): ThreeEval` — 入参必须恰好 3 张，否则抛错
-  - `function compareThree(a: ThreeEval, b: ThreeEval): number` — 正数表示 a 大；**永不返回 0**（花色决胜保证全序）
+  - `function compareThree(a: ThreeEval, b: ThreeEval): number` — 正数表示 a 大；**点数完全相同时返回 0**（平局由调用方按规则裁定）
 
-**规则要点：** 豹子 > 顺金 > 金花 > 顺子 > 对子 > 单张；A 可作最大或最小，AKQ 最大顺、A23 最小顺；花色序 黑桃(3) > 红桃(2) > 梅花(1) > 方块(0)。
+**规则要点（国际标准）：** 豹子 > 顺金 > **顺子 > 金花** > 对子 > 单张；A 可作最大或最小，AKQ 最大顺、A23 最小顺；**不使用花色决胜**，点数相同即平局（`compareThree` 返回 0）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -268,11 +268,12 @@ describe('牌型识别', () => {
   it('K A 2 不是顺子', () => { expect(ev('s13 h14 d2').category).toBe('high') })
 })
 
-describe('牌型之间的大小', () => {
+describe('牌型之间的大小（国际标准：顺子 > 金花）', () => {
   it('豹子 > 顺金', () => gt('s2 h2 d2', 's14 s13 s12'))
-  it('顺金 > 金花', () => gt('s9 s10 s11', 's14 s13 s11'))
-  it('金花 > 顺子', () => gt('s2 s5 s9', 's14 h13 d12'))
-  it('顺子 > 对子', () => gt('s14 h2 d3', 's14 h14 d13'))
+  it('顺金 > 顺子', () => gt('s9 s10 s11', 's14 h13 d12'))
+  it('顺子 > 金花', () => gt('s14 h13 d12', 's14 s13 s11'))
+  it('最小的顺子 > 最大的金花', () => gt('s14 h2 d3', 's14 s13 s11'))
+  it('金花 > 对子', () => gt('s2 s5 s9', 's14 h14 d13'))
   it('对子 > 单张', () => gt('s2 h2 d3', 's14 h13 d11'))
 })
 
@@ -288,15 +289,18 @@ describe('同牌型比较', () => {
   it('单张逐张比', () => gt('s14 h5 d2', 's13 h12 d11'))
 })
 
-describe('花色决胜（保证全序，永不平局）', () => {
-  it('点数完全相同时黑桃大于红桃', () => gt('s14 s13 s11', 'h14 h13 h11'))
-  it('红桃大于梅花', () => gt('h14 h13 h11', 'c14 c13 c11'))
-  it('梅花大于方块', () => gt('c14 c13 c11', 'd14 d13 d11'))
-  it('任意两手牌比较结果永不为 0', () => {
-    const hands = ['s14 h13 d12', 'h14 s13 c12', 's2 h2 d3', 'c2 d2 h3', 's9 s10 s11', 'h9 h10 h11']
-    for (const a of hands) for (const b of hands) {
-      if (a !== b) expect(compareThree(ev(a), ev(b))).not.toBe(0)
-    }
+describe('平局（国际标准：不用花色决胜）', () => {
+  it('点数相同、花色不同的金花判平局', () => {
+    expect(compareThree(ev('s14 s13 s11'), ev('h14 h13 h11'))).toBe(0)
+  })
+  it('点数相同的对子判平局', () => {
+    expect(compareThree(ev('s9 h9 d14'), ev('c9 d9 h14'))).toBe(0)
+  })
+  it('点数相同的单张判平局', () => {
+    expect(compareThree(ev('s14 h13 d11'), ev('c14 d13 s11'))).toBe(0)
+  })
+  it('花色不参与比较：交换花色不改变分数', () => {
+    expect(ev('s14 h13 d11').score).toBe(ev('d14 c13 h11').score)
   })
 })
 
@@ -327,12 +331,14 @@ export interface ThreeEval {
   cards: Card[]
 }
 
+/**
+ * 国际标准（Teen Patti / Three Card Brag）的牌型序。
+ * 注意 straight > flush —— 三张牌时顺子（720 种）比金花（1096 种）稀有，
+ * 中式炸金花常见的「金花 > 顺子」在概率上是反的，本项目不采用。
+ */
 const CATEGORY_RANK: Record<ThreeCategory, number> = {
-  high: 0, pair: 1, straight: 2, flush: 3, straightFlush: 4, trips: 5,
+  high: 0, pair: 1, flush: 2, straight: 3, straightFlush: 4, trips: 5,
 }
-
-/** 花色决胜序：黑桃 > 红桃 > 梅花 > 方块 */
-const SUIT_ORDER: Record<string, number> = { s: 3, h: 2, c: 1, d: 0 }
 
 /**
  * 顺子判定。返回该顺子的「高张等价值」用于比较：
@@ -354,18 +360,13 @@ function pack(...parts: number[]): number {
 export function evalThree(cards: readonly Card[]): ThreeEval {
   if (cards.length !== 3) throw new Error('炸金花必须是 3 张牌')
 
-  const sorted = [...cards].sort((a, b) =>
-    b.rank - a.rank || (SUIT_ORDER[b.suit] ?? 0) - (SUIT_ORDER[a.suit] ?? 0))
+  const sorted = [...cards].sort((a, b) => b.rank - a.rank)
   const ranks = sorted.map((c) => c.rank)
   const suits = sorted.map((c) => c.suit)
 
   const isFlush = suits[0] === suits[1] && suits[1] === suits[2]
   const high = straightHigh(ranks)
   const isTrips = ranks[0] === ranks[1] && ranks[1] === ranks[2]
-
-  // 花色总分：三张花色权重按牌面从大到小加权，用作最后的决胜位
-  const suitScore = pack(
-    SUIT_ORDER[suits[0]] ?? 0, SUIT_ORDER[suits[1]] ?? 0, SUIT_ORDER[suits[2]] ?? 0)
 
   let category: ThreeCategory
   let body: number
@@ -392,13 +393,17 @@ export function evalThree(cards: readonly Card[]): ThreeEval {
     body = pack(ranks[0]!, ranks[1]!, ranks[2]!)
   }
 
-  // 分数结构：牌型 | 牌型内主体 | 花色决胜。低位留给花色，保证全序。
-  const score = pack(CATEGORY_RANK[category]) * 16 ** 6 + body * 16 ** 3 + suitScore
+  // 分数结构：牌型 | 牌型内主体。花色不参与，点数相同即同分。
+  const score = CATEGORY_RANK[category] * 16 ** 3 + body
 
   return { category, score, cards: sorted }
 }
 
-/** 正数表示 a 大。因为花色参与决胜，永不返回 0。 */
+/**
+ * 正数表示 a 大，0 表示平局。
+ * 国际标准不用花色决胜，所以平局是可能的 —— 由调用方按规则裁定
+ * （炸金花：比牌平局时发起方判负）。
+ */
 export function compareThree(a: ThreeEval, b: ThreeEval): number {
   return a.score - b.score
 }
@@ -422,7 +427,7 @@ Expected: 全绿、零错误。
 在测试文件追加：所有 C(52,3) = 22100 种组合两两比较过于昂贵，改为断言「随机 5000 对不同手牌的比较结果非 0，且 compare(a,b) 与 compare(b,a) 严格反号」。
 
 ```ts
-it('随机 5000 对：反对称且无平局', () => {
+it('随机 5000 对：比较结果严格反对称', () => {
   const deck = createDeck()
   const rng = createRng(1)
   const pick = () => {
@@ -432,9 +437,7 @@ it('随机 5000 对：反对称且无平局', () => {
   for (let i = 0; i < 5000; i++) {
     const a = pick(), b = pick()
     const ab = compareThree(a, b), ba = compareThree(b, a)
-    if (a.score === b.score) continue          // 同一手牌
-    expect(ab).not.toBe(0)
-    expect(Math.sign(ab)).toBe(-Math.sign(ba))
+    expect(Math.sign(ab)).toBe(-Math.sign(ba))   // 平局时两侧都为 0，同样成立
   }
 })
 ```
@@ -819,7 +822,7 @@ export interface ZjhState {
 
 1. `init` 发 3 张给每人，所有人 `stakeFactor = 0.5`（闷牌），底注按明注计入。
 2. `look` 把该玩家加入 `looked`，其 `stakeFactor` 改为 1。看牌**不消耗行动权**——同一回合看完仍需跟/加/弃/比。
-3. `compare` 只有 `looked` 双方之间可发起，需支付与当前明注相等的注额；比较 `evalThree`，输者进 `folded`；记录只存 `winner`，**不存牌面**。
+3. `compare` 只有 `looked` 双方之间可发起，需支付与当前明注相等的注额；比较 `evalThree`，输者进 `folded`；**平局时发起方判负**（国际标准）；记录只存 `winner`，**不存牌面**。
 4. 达到 `maxRounds` 后 `legalActions` 不再包含 `raise`，只剩 `call` / `fold` / `compare`。
 5. 只剩一人时 `over = true`，`winner` 为该人。
 6. `settle`：赢家得 `pot - 自己投入`，其余各得 `-自己投入`。断言总和为 0。
@@ -855,6 +858,7 @@ init
   - 不能向自己比牌
   - 比牌需支付与明注相等的注额
   - 输者进入 folded、赢者继续
+  - 平局时发起方判负（构造两手同分的牌验证）
   - compares 记录里不含任何牌面
   - 剩两人时比牌直接决出胜负
 
@@ -887,6 +891,7 @@ isLegal 与 legalActions 一致
 
 - **闷牌折算的取整**：所有折算金额 `Math.ceil`，且必须在 `toCall` 一处完成，不要在调用点各自取整——否则两处会算出不同的数。
 - **比牌的支付与结算顺序**：先扣注额进池，再比较、再判定出局。反过来会让输者少付一次注。
+- **平局判负的方向**：`compareThree` 返回 0 时判**发起方**输。写反了会让主动比牌变成稳赚不赔。
 - **`view` 对未看牌者的处理**：未 `look` 的玩家连自己的牌都不能看到。这是闷牌玩法的核心，漏了就等于所有人都在明牌。
 
 - [ ] **Step 4: 注册引擎**
