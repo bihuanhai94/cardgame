@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useStore } from './store.js'
 
 beforeEach(() => useStore.getState().reset())
@@ -44,5 +44,43 @@ describe('applyServerMessage', () => {
     const before = useStore.getState().view
     useStore.getState().applyServerMessage({ t: 'pong' })
     expect(useStore.getState().view).toBe(before)
+  })
+})
+
+describe('陈旧 token 的处理', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('任意接口 401 时清空本地 token，回到未登录状态', async () => {
+    useStore.setState({ token: 'stale-token', user: { id: 'u1', nickname: '甲' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: '登录凭证无效' }),
+      }),
+    )
+
+    await expect(useStore.getState().refreshMe()).rejects.toThrow()
+
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().user).toBeNull()
+  })
+
+  it('logout() 即使接口请求失败也会清空本地状态', async () => {
+    useStore.setState({ token: 'stale-token', user: { id: 'u1', nickname: '甲' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: '登录凭证无效' }),
+      }),
+    )
+
+    await useStore.getState().logout().catch(() => {})
+
+    expect(useStore.getState().token).toBeNull()
+    expect(useStore.getState().user).toBeNull()
   })
 })

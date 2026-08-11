@@ -54,7 +54,18 @@ function writeToken(token: string | null): void {
   else localStorage.setItem?.('token', token)
 }
 
-export const useStore = create<State>((set, get) => ({
+export const useStore = create<State>((set, get) => {
+  // 401 时清掉本地 token 与登录态，让 App.tsx 的路由回到登录页，
+  // 而不是永久卡在"localStorage 有 token 但每个请求都静默 401"的状态。
+  api.onUnauthorized = () => {
+    writeToken(null)
+    api.setToken(null)
+    get().socket?.close()
+    set({ token: null, socket: null })
+    get().reset()
+  }
+
+  return {
   api,
   socket: null,
   token: readToken(),
@@ -123,12 +134,17 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async logout() {
-    await api.post('/api/logout')
-    writeToken(null)
-    api.setToken(null)
-    get().socket?.close()
-    set({ token: null, socket: null })
-    get().reset()
+    try {
+      await api.post('/api/logout')
+    } finally {
+      // 即使登出请求本身因 token 已失效而 401/抛错，也必须把本地状态清掉——
+      // 否则退出按钮在 token 陈旧时会自我锁死，用户只能手动清 localStorage。
+      writeToken(null)
+      api.setToken(null)
+      get().socket?.close()
+      set({ token: null, socket: null })
+      get().reset()
+    }
   },
 
   async refreshMe() {
@@ -159,4 +175,5 @@ export const useStore = create<State>((set, get) => ({
   startGame() {
     get().socket?.send({ t: 'start' })
   },
-}))
+  }
+})
