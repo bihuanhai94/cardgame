@@ -10,6 +10,7 @@ export function Friends() {
   const [pending, setPending] = useState<Pending[]>([])
   const [q, setQ] = useState('')
   const [found, setFound] = useState<Friend[]>([])
+  const [err, setErr] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const r = await api.get<{ friends: Friend[]; pending: Pending[] }>('/api/friends')
@@ -20,8 +21,43 @@ export function Friends() {
   useEffect(() => { void load() }, [load])
 
   async function search() {
-    const r = await api.get<{ users: Friend[] }>(`/api/users/search?q=${encodeURIComponent(q)}`)
-    setFound(r.users)
+    setErr(null)
+    try {
+      const r = await api.get<{ users: Friend[] }>(`/api/users/search?q=${encodeURIComponent(q)}`)
+      setFound(r.users)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+  }
+
+  async function sendRequest(toUserId: string) {
+    setErr(null)
+    try {
+      await api.post('/api/friends/request', { toUserId })
+      await load()
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+  }
+
+  async function accept(requestId: string) {
+    setErr(null)
+    try {
+      await api.post('/api/friends/accept', { requestId })
+      await load()
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+  }
+
+  async function reject(requestId: string) {
+    setErr(null)
+    try {
+      await api.post('/api/friends/reject', { requestId })
+      await load()
+    } catch (e) {
+      setErr((e as Error).message)
+    }
   }
 
   return (
@@ -32,11 +68,11 @@ export function Friends() {
           value={q} onChange={(e) => setQ(e.target.value)} />
         <button className="rounded border px-3" onClick={() => void search()}>搜索</button>
       </div>
+      {err && <p className="text-sm text-red-600">{err}</p>}
       {found.map((u) => (
         <div key={u.id} className="flex justify-between rounded border p-2">
           <span>{u.nickname}</span>
-          <button className="text-blue-600"
-            onClick={async () => { await api.post('/api/friends/request', { toUserId: u.id }); await load() }}>
+          <button className="text-blue-600" onClick={() => void sendRequest(u.id)}>
             加好友
           </button>
         </div>
@@ -46,12 +82,10 @@ export function Friends() {
         <div key={p.id} className="flex justify-between rounded border p-2">
           <span>{p.nickname}</span>
           <span className="flex gap-3">
-            <button className="text-blue-600"
-              onClick={async () => { await api.post('/api/friends/accept', { requestId: p.id }); await load() }}>
+            <button className="text-blue-600" onClick={() => void accept(p.id)}>
               接受
             </button>
-            <button className="text-slate-500"
-              onClick={async () => { await api.post('/api/friends/reject', { requestId: p.id }); await load() }}>
+            <button className="text-slate-500" onClick={() => void reject(p.id)}>
               拒绝
             </button>
           </span>

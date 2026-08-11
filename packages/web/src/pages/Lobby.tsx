@@ -5,25 +5,41 @@ export function Lobby({ onEnterRoom }: { onEnterRoom: (roomId: string) => void }
   const { api, user, netWorth, refreshMe, logout } = useStore()
   const [roomId, setRoomId] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => { void refreshMe() }, [refreshMe])
 
   async function createRoom() {
-    const r = await api.post<{ roomId: string }>('/api/rooms', {
-      gameId: 'highcard', seats: 3, options: { ante: 100 },
-    })
-    onEnterRoom(r.roomId)
+    setErr(null)
+    try {
+      const r = await api.post<{ roomId: string }>('/api/rooms', {
+        gameId: 'highcard', seats: 3, options: { ante: 100 },
+      })
+      onEnterRoom(r.roomId)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
   }
 
   async function claim() {
-    const r = await api.post<{ claimed: boolean; amount: number }>('/api/daily')
-    setMsg(r.claimed ? `签到成功，获得 ${r.amount}` : '今天已经签到过了')
-    await refreshMe()
+    setErr(null)
+    try {
+      const r = await api.post<{ claimed: boolean; amount: number }>('/api/daily')
+      setMsg(r.claimed ? `签到成功，获得 ${r.amount}` : '今天已经签到过了')
+      await refreshMe()
+    } catch (e) {
+      setErr((e as Error).message)
+    }
   }
 
   async function makeInvite() {
-    const r = await api.post<{ code: string }>('/api/invite')
-    setMsg(`邀请码：${r.code}`)
+    setErr(null)
+    try {
+      const r = await api.post<{ code: string }>('/api/invite')
+      setMsg(`邀请码：${r.code}`)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
   }
 
   return (
@@ -41,6 +57,7 @@ export function Lobby({ onEnterRoom }: { onEnterRoom: (roomId: string) => void }
         </div>
       )}
       {msg && <p className="text-sm text-blue-700">{msg}</p>}
+      {err && <p className="text-sm text-red-600">{err}</p>}
       <button className="rounded bg-blue-600 p-2 text-white" onClick={() => void createRoom()}>
         创建房间
       </button>
