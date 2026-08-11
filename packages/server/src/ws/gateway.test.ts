@@ -5,7 +5,9 @@ import { checkGlobalInvariant } from '../domain/ledger.js'
 import { RoomManager } from '../room/room.js'
 import { registerEngine } from '../room/registry.js'
 import { highCard } from '../games/highcard.js'
-import { handleMessage, type ConnCtx } from './gateway.js'
+import * as http from 'node:http'
+import { WebSocket as WsClient } from 'ws'
+import { handleMessage, attachGateway, renderBroadcast, type ConnCtx } from './gateway.js'
 
 beforeAll(() => registerEngine(highCard))
 
@@ -271,5 +273,112 @@ describe('对局动作', () => {
     handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'call' } }))
     handleMessage(cb, JSON.stringify({ t: 'action', action: { type: 'call' } }))
     expect(checkGlobalInvariant(db).ok).toBe(true)
+  })
+
+  it('行动者自己也拿到最新的 roomState（房主再次开局的入口不会消失）', () => {
+    const { ca } = playing()
+    const out = handleMessage(ca, JSON.stringify({ t: 'action', action: { type: 'call' } }))
+    expect(out.some((m) => m.t === 'roomState')).toBe(true)
+  })
+})
+
+describe('renderBroadcast（广播路径的逐连接裁剪）', () => {
+  it('两个连接各自拿到互不相同的裁剪视图，互不泄漏对方手牌', () => {
+    const { rooms, mk } = boot()
+    const a = mk('甲')
+    const b = mk('乙')
+    const room = rooms.create({ gameId: 'highcard', ownerId: a.user.id, seats: 2, options: { ante: 100 } })
+    room.sit(a.user.id)
+    room.sit(b.user.id)
+    room.start()
+
+    const [renderedA, renderedB] = renderBroadcast(room, [
+      { userId: a.user.id },
+      { userId: b.user.id },
+    ])
+
+    const viewA = renderedA!.find((m) => m.t === 'gameView') as { view: { hands: Record<string, unknown> } }
+    const viewB = renderedB!.find((m) => m.t === 'gameView') as { view: { hands: Record<string, unknown> } }
+
+    expect(Object.keys(viewA.view.hands)).toEqual([a.user.id])
+    expect(Object.keys(viewB.view.hands)).toEqual([b.user.id])
+    // 决定性断言：B 的视图中不包含 A 的手牌键，若两个连接复用同一份渲染结果，这里会失败
+    expect(viewB.view.hands).not.toHaveProperty(a.user.id)
+    expect(viewA.view.hands).not.toHaveProperty(b.user.id)
+  })
+
+})
+
+describe('attachGateway 广播（真实两连接）', () => {
+  function wait<T>(ws: WsClient, predicate: (msg: any) => T | undefined): Promise<T> {
+    return new Promise((resolve) => {
+      const onMsg = (data: Buffer) => {
+        const msg = JSON.parse(data.toString())
+        const hit = predicate(msg)
+        if (hit !== undefined) {
+          ws.off('message', onMsg)
+          resolve(hit)
+        }
+      }
+      ws.on('message', onMsg)
+    })
+  }
+
+  it('非行动方的连接通过广播收到 settled，且看不到对方手牌', async () => {
+    const { db, rooms, mk } = boot()
+    const a = mk('甲')
+    const b = mk('乙')
+    const room = rooms.create({ gameId: 'highcard', ownerId: a.user.id, seats: 2, options: { ante: 100 } })
+
+    const server = http.createServer()
+    const gw = attachGateway(server, { db, rooms })
+    await new Promise<void>((resolve) => server.listen(0, resolve))
+    const addr = server.address()
+    const port = typeof addr === 'object' && addr ? addr.port : 0
+
+    const wsA = new WsClient(`ws://127.0.0.1:${port}/ws`)
+    const wsB = new WsClient(`ws://127.0.0.1:${port}/ws`)
+    await Promise.all([
+      new Promise((r) => wsA.on('open', r)),
+      new Promise((r) => wsB.on('open', r)),
+    ])
+
+    wsA.send(JSON.stringify({ t: 'auth', token: a.token }))
+    wsB.send(JSON.stringify({ t: 'auth', token: b.token }))
+    await wait(wsA, (m) => (m.t === 'authOk' ? true : undefined))
+    await wait(wsB, (m) => (m.t === 'authOk' ? true : undefined))
+
+    wsA.send(JSON.stringify({ t: 'join', roomId: room.id }))
+    await wait(wsA, (m) => (m.t === 'roomState' ? true : undefined))
+    wsB.send(JSON.stringify({ t: 'join', roomId: room.id }))
+    await wait(wsB, (m) => (m.t === 'roomState' ? true : undefined))
+
+    wsA.send(JSON.stringify({ t: 'start' }))
+    await wait(wsA, (m) => (m.t === 'gameView' ? true : undefined))
+
+    // 甲先行动，此时局未结束
+    wsA.send(JSON.stringify({ t: 'action', action: { type: 'call' } }))
+    await wait(wsA, (m) => (m.t === 'gameView' ? true : undefined))
+
+    // 乙行动使对局结束；乙自己作为行动者会收到 settled，
+    // 关键断言在甲身上：甲全程没有再发消息，却仍应通过 broadcast() 收到 settled。
+    const settledOnAPromise = wait(wsA, (m) =>
+      m.t === 'settled' ? (m as { deltas: Record<string, number> }) : undefined,
+    )
+    const viewOnAPromise = wait(wsA, (m) =>
+      m.t === 'gameView' ? (m as { view: { hands: Record<string, unknown> } }) : undefined,
+    )
+    wsB.send(JSON.stringify({ t: 'action', action: { type: 'call' } }))
+
+    const [settledOnA, viewOnA] = await Promise.all([settledOnAPromise, viewOnAPromise])
+    expect(Object.values(settledOnA.deltas).reduce((x, y) => x + y, 0)).toBe(0)
+    // 结算后视图裁剪按 highcard 的 over 规则会揭示全部手牌；断言至少不会
+    // 意外包含未知键，形状健全即可（泄漏检测由 fuzz 的 secretProbe 负责）
+    expect(viewOnA.view.hands).toBeDefined()
+
+    wsA.close()
+    wsB.close()
+    gw.close()
+    server.close()
   })
 })

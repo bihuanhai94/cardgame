@@ -106,6 +106,7 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
       const out: ServerMessage[] = [
         { t: 'events', events },
         { t: 'gameView', view: room.viewFor(ctx.userId) },
+        { t: 'roomState', roomId: room.id, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted() },
       ]
 
       const settlement = room.takeSettlement()
@@ -121,6 +122,26 @@ export function handleMessage(ctx: ConnCtx, raw: string): ServerMessage[] {
   }
 }
 
+/**
+ * 为一组连接分别渲染广播消息：每个连接按自己的 userId 单独裁剪视图，
+ * 绝不复用同一份渲染结果。抽成纯函数以便直接测试广播路径，不必驱动真实 socket。
+ */
+export function renderBroadcast(
+  room: Pick<import('../room/room.js').Room, 'viewFor' | 'id' | 'ownerId' | 'seatInfos' | 'isStarted'>,
+  targets: { userId: string | null }[],
+): ServerMessage[][] {
+  return targets.map((t) => [
+    { t: 'gameView', view: room.viewFor(t.userId) },
+    {
+      t: 'roomState',
+      roomId: room.id,
+      ownerId: room.ownerId,
+      seats: room.seatInfos(),
+      started: room.isStarted(),
+    },
+  ])
+}
+
 export function attachGateway(
   server: http.Server,
   deps: { db: DatabaseSync; rooms: RoomManager },
@@ -128,17 +149,20 @@ export function attachGateway(
   const wss = new WebSocketServer({ server, path: '/ws' })
   const conns = new Map<WebSocket, ConnCtx>()
 
-  const broadcast = (roomId: string, except: WebSocket): void => {
+  const broadcast = (roomId: string, except: WebSocket, extra?: ServerMessage): void => {
     const room = deps.rooms.get(roomId)
     if (!room) return
+    const targets: [WebSocket, ConnCtx][] = []
     for (const [sock, c] of conns) {
       if (sock === except || c.roomId !== roomId || sock.readyState !== WebSocket.OPEN) continue
-      // 每个连接单独裁剪，绝不复用他人视图
-      sock.send(JSON.stringify({ t: 'gameView', view: room.viewFor(c.userId) }))
-      sock.send(JSON.stringify({
-        t: 'roomState', roomId, ownerId: room.ownerId, seats: room.seatInfos(), started: room.isStarted(),
-      }))
+      targets.push([sock, c])
     }
+    const rendered = renderBroadcast(room, targets.map(([, c]) => c))
+    targets.forEach(([sock], i) => {
+      for (const m of rendered[i]!) sock.send(JSON.stringify(m))
+      // 结算消息不含逐人视图差异，原样转发给房间内其余连接，且只发这一次
+      if (extra) sock.send(JSON.stringify(extra))
+    })
   }
 
   wss.on('connection', (sock) => {
@@ -151,7 +175,10 @@ export function attachGateway(
         const out = handleMessage(ctx, data.toString())
         for (const m of out) sock.send(JSON.stringify(m))
         const roomId = ctx.roomId ?? before
-        if (roomId) broadcast(roomId, sock)
+        if (roomId) {
+          const settled = out.find((m) => m.t === 'settled')
+          broadcast(roomId, sock, settled)
+        }
       } catch (e) {
         sock.send(JSON.stringify({ t: 'error', code: 'INTERNAL', message: '服务器内部错误' }))
       }
