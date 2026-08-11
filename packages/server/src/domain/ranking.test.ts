@@ -10,8 +10,12 @@ const OLD = Date.now() + LOAN_COOLDOWN_MS + 1000
 
 function setup() {
   const db = openTestDb()
-  const mk = (n: string) =>
-    registerUser(db, { nickname: n, password: 'pw123456', inviteCode: createInviteCode(db, null) })
+  const mk = (n: string) => {
+    const u = registerUser(db, { nickname: n, password: 'pw123456', inviteCode: createInviteCode(db, null) })
+    // Backdate users to well before OLD to ensure age check passes for OLD timestamp
+    db.prepare('UPDATE users SET created_at = ? WHERE id = ?').run(OLD - LOAN_COOLDOWN_MS - 2000, u.id)
+    return u
+  }
   return { db, a: mk('甲'), b: mk('乙') }
 }
 
