@@ -53,12 +53,22 @@ export function startRound(
   return advanceIfNeeded(rs)
 }
 
+/**
+ * 把名义额度折算成该家还需实付的金额。
+ *
+ * **这是全模块唯一的取整点。** 折半注会产生小数，若多处各自 Math.ceil，
+ * 同一情形会算出不同的数，池子就配不平了 —— 且这种错误要到结算才暴露。
+ * 任何需要「按 stakeFactor 折算」的地方都必须走这里。
+ */
+function needFor(s: BetSeat, nominal: number): number {
+  return Math.ceil(nominal * s.stakeFactor) - s.committed
+}
+
 /** 该家还需投入多少才算跟上（已按 stakeFactor 折算并向上取整） */
 export function toCall(rs: RoundState, seatId: string): number {
   const s = seatOf(rs, seatId)
   if (!s) return 0
-  const need = Math.ceil(rs.currentBet * s.stakeFactor) - s.committed
-  return Math.max(0, need)
+  return Math.max(0, needFor(s, rs.currentBet))
 }
 
 export function isLegalBet(rs: RoundState, seatId: string, a: BetAction): boolean {
@@ -72,8 +82,7 @@ export function isLegalBet(rs: RoundState, seatId: string, a: BetAction): boolea
   if (a.type === 'raise') {
     if (!Number.isInteger(a.to)) return false
     if (a.to < rs.currentBet + rs.minRaise) return false
-    const need = Math.ceil(a.to * s.stakeFactor) - s.committed
-    return need <= s.stack           // 筹码不够就不能加注，只能全下跟注
+    return needFor(s, a.to) <= s.stack           // 筹码不够就不能加注，只能全下跟注
   }
   return false
 }
@@ -88,7 +97,7 @@ export function applyBet(rs0: RoundState, seatId: string, a: BetAction): RoundSt
   } else {
     const want = a.type === 'call'
       ? toCall(rs, seatId)
-      : Math.ceil(a.to * s.stakeFactor) - s.committed
+      : needFor(s, a.to)
     const pay = Math.min(want, s.stack)
     s.stack -= pay
     s.committed += pay
@@ -124,8 +133,8 @@ export function isRoundOver(rs: RoundState): boolean {
     rs.actedSinceRaise.includes(s.id) && toCall(rs, s.id) === 0)
 }
 
+/** 调用方须已持有一份可安全变更的状态（新建或 clone 过），本函数原地补上 `over` 标记。 */
 function advanceIfNeeded(rs: RoundState): RoundState {
-  const out = clone(rs)
-  out.over = isRoundOver(out)
-  return out
+  rs.over = isRoundOver(rs)
+  return rs
 }

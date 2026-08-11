@@ -68,6 +68,13 @@ describe('isLegalBet', () => {
     const rs = startRound(seats(['a', 12], ['b', 1000]), 0, 20, 20)
     expect(isLegalBet(rs, 'a', { type: 'call' })).toBe(true)
   })
+
+  it('闷牌者的加注能力按折算后的金额判定，而非名义额', () => {
+    // 闷牌 factor 0.5：加注到 40 实付 20，30 筹码够；加注到 80 实付 40，不够
+    const rs = startRound(seats(['a', 30, 0.5], ['b', 1000]), 0, 20, 20)
+    expect(isLegalBet(rs, 'a', { type: 'raise', to: 40 })).toBe(true)
+    expect(isLegalBet(rs, 'a', { type: 'raise', to: 80 })).toBe(false)
+  })
 })
 
 describe('applyBet', () => {
@@ -109,6 +116,14 @@ describe('applyBet', () => {
     const snapshot = JSON.stringify(rs)
     applyBet(rs, 'a', { type: 'call' })
     expect(JSON.stringify(rs)).toBe(snapshot)
+  })
+
+  it('闷牌者实付金额与 toCall 的折算口径一致', () => {
+    let rs = startRound(seats(['a', 1000, 0.5], ['b', 1000]), 0, 25, 25)
+    const before = rs.seats.find((s) => s.id === 'a')!.stack
+    rs = applyBet(rs, 'a', { type: 'raise', to: 51 })
+    const paid = before - rs.seats.find((s) => s.id === 'a')!.stack
+    expect(paid).toBe(Math.ceil(51 * 0.5))   // 26，不是 25.5 也不是 25
   })
 })
 
