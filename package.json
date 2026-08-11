@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
     "typecheck": "tsc -b",
+    "check-size": "pnpm --filter @cardgame/web build && node scripts/check-bundle-size.mjs",
     "fuzz": "tsc -b && node --experimental-sqlite packages/server/dist/testing/run-fuzz.js"
   },
   "devDependencies": {

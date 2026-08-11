@@ -1,6 +1,7 @@
 .superpowers/
 node_modules/
 dist/
+dist-tsc/
 *.db
 *.db-wal
 *.db-shm
