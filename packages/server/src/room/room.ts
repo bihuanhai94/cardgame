@@ -117,6 +117,10 @@ export class Room {
   act(userId: string, action: unknown): { events: GameEvent[] } {
     if (!this.started) throw new Error('本局尚未开局')
     const engine = getEngine(this.gameId)
+    const legal = engine.legalActions(this.state, userId)
+    if (!legal.some((a) => JSON.stringify(a) === JSON.stringify(action))) {
+      throw new Error('非法动作')
+    }
     const result = engine.apply(this.state, userId, action)
     this.state = result.state
     this.actions.push({ playerId: userId, action })

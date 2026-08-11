@@ -14,6 +14,16 @@ describe('fuzzEngine', () => {
     expect(fuzzEngine(highCard, { rounds: 500, players: ['a', 'b'] }).rounds).toBe(500)
   })
 
+  it('highcard 拒绝非法动作（spec 9 不变量 #2）', () => {
+    const r = fuzzEngine(highCard, {
+      rounds: 500,
+      players: ['a', 'b', 'c'],
+      options: { ante: 100 },
+      probeIllegal: true,
+    })
+    expect(r.rounds).toBe(500)
+  })
+
   it('检测出违反零和的引擎', () => {
     const broken: Engine<{ done: boolean }, { type: 'go' }> = {
       id: 'broken-sum',

@@ -19,6 +19,11 @@ function cardValue(c: Card): number {
   return c.rank * 10 + (suitOrder[c.suit] ?? 0)
 }
 
+/** 本局是否已结束：唯一判定点，isOver 与 view 共用，避免两处逻辑分叉 */
+function isOver(state: HighCardState): boolean {
+  return state.acted.length === state.players.length
+}
+
 export const highCard: Engine<HighCardState, HighCardAction> = {
   id: 'highcard',
 
@@ -49,6 +54,11 @@ export const highCard: Engine<HighCardState, HighCardAction> = {
     if (!state.players.includes(playerId)) throw new Error('该玩家不在本局中')
     if (state.acted.includes(playerId)) throw new Error('该玩家本轮已经行动过')
 
+    const legal = highCard.legalActions(state, playerId)
+    if (!legal.some((a) => a.type === action.type)) {
+      throw new Error(`非法动作：${(action as { type: unknown }).type as string}`)
+    }
+
     if (action.type === 'fold') {
       return {
         state: {
@@ -65,9 +75,7 @@ export const highCard: Engine<HighCardState, HighCardAction> = {
     }
   },
 
-  isOver(state) {
-    return state.acted.length === state.players.length
-  },
+  isOver,
 
   settle(state): Settlement {
     const deltas: Record<string, number> = {}
@@ -88,7 +96,7 @@ export const highCard: Engine<HighCardState, HighCardAction> = {
   },
 
   view(state, viewerId) {
-    const over = state.acted.length === state.players.length
+    const over = isOver(state)
     const hands: Record<string, Card> = {}
     if (over) {
       Object.assign(hands, state.hands)
