@@ -694,6 +694,7 @@ git commit -m "feat(shared): 引擎契约与通信协议类型"
 - Create: `packages/server/tsconfig.json`
 - Modify: `vitest.workspace.ts`（补回 `server` 项目项）
 - Create: `packages/server/src/db/migrations.ts`
+- Create: `packages/server/src/db/sqlite.ts`
 - Create: `packages/server/src/db/open.ts`
 - Test: `packages/server/src/db/open.test.ts`
 
@@ -924,13 +925,33 @@ export const MIGRATIONS: Migration[] = [
 ]
 ```
 
+- [ ] **Step 5a: 实现 sqlite.ts（node:sqlite 加载垫片）**
+
+Vite 5 在转换阶段会剥掉 `node:` 前缀再查 `builtinModules`，而 `sqlite` 不在该列表中（与 `node:test` 同理），导致 vitest 报 `Failed to load url sqlite`。用 `createRequire` 在运行时加载可绕开静态分析，行为在 Node 22 与 25 上一致。
+
+**全仓唯一一处以值形式导入 `node:sqlite` 的地方**，其余文件一律 `import type { DatabaseSync } from 'node:sqlite'`（类型导入会被编译期擦除，不受此问题影响）。
+
+`packages/server/src/db/sqlite.ts`：
+
+```ts
+import { createRequire } from 'node:module'
+
+// Vite 5 无法解析 node:sqlite（剥掉 node: 前缀后 sqlite 不在 builtinModules 中），
+// 用 createRequire 在运行时加载以绕开其静态分析。
+const nodeRequire = createRequire(import.meta.url)
+
+export const { DatabaseSync } = nodeRequire('node:sqlite') as typeof import('node:sqlite')
+export type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
+```
+
 - [ ] **Step 5: 实现 open.ts**
 
 ```ts
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from './sqlite.js'
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
 import { MIGRATIONS } from './migrations.js'
 
-export function applyMigrations(db: DatabaseSync): void {
+export function applyMigrations(db: DatabaseSyncType): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -953,7 +974,7 @@ export function applyMigrations(db: DatabaseSync): void {
   }
 }
 
-export function openDb(path: string): DatabaseSync {
+export function openDb(path: string): DatabaseSyncType {
   const db = new DatabaseSync(path)
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA foreign_keys = ON')
@@ -961,7 +982,7 @@ export function openDb(path: string): DatabaseSync {
   return db
 }
 
-export function openTestDb(): DatabaseSync {
+export function openTestDb(): DatabaseSyncType {
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   applyMigrations(db)
