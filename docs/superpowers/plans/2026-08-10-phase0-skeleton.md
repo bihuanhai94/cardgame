@@ -1016,6 +1016,7 @@ git commit -m "feat(server): SQLite 连接与迁移执行器"
   - `const MINT_ACCOUNT = 'system:mint'`
   - `function userAccount(userId: string): string` — 返回 `user:<id>`
   - `interface PostingLine { account: string; delta: number }`
+  - `function withTransaction<T>(db, fn: () => T): T` — 以 SAVEPOINT 实现的原子单元，可安全嵌套
   - `function postTransaction(db, lines: PostingLine[], reason: string, refId?: string | null): string` — 校验零和后原子写入，返回 txnId
   - `function getBalance(db, account: string): number`
   - `function checkGlobalInvariant(db): { total: number; ok: boolean }`
@@ -1186,6 +1187,29 @@ export interface PostingLine {
   delta: number
 }
 
+let savepointSeq = 0
+
+/**
+ * 在一个原子单元内执行 fn。
+ *
+ * 用 SAVEPOINT 而非 BEGIN：最外层的 SAVEPOINT 行为等同于事务，嵌套时则成为
+ * 子事务。这样调用方无需知道自己是否已处在事务中，账务写入与业务表写入
+ * 可以被调用方包成一个原子单元（借条、对局结算都依赖这一点）。
+ */
+export function withTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  const name = `sp_${savepointSeq++}`
+  db.exec(`SAVEPOINT ${name}`)
+  try {
+    const result = fn()
+    db.exec(`RELEASE ${name}`)
+    return result
+  } catch (err) {
+    db.exec(`ROLLBACK TO ${name}`)
+    db.exec(`RELEASE ${name}`)
+    throw err
+  }
+}
+
 /**
  * 过账。校验零和后在单个事务内写入全部流水。
  * 任一校验失败则抛异常且不留下任何记录。
@@ -1208,14 +1232,9 @@ export function postTransaction(
   const stmt = db.prepare(
     'INSERT INTO ledger_entries (txn_id, account, delta, reason, ref_id, created_at) VALUES (?,?,?,?,?,?)',
   )
-  db.exec('BEGIN')
-  try {
+  withTransaction(db, () => {
     for (const l of lines) stmt.run(txnId, l.account, l.delta, reason, refId, now)
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+  })
   return txnId
 }
 
@@ -2134,7 +2153,7 @@ Expected: FAIL，找不到 `./loans.js`。
 ```ts
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { postTransaction, getBalance, userAccount } from './ledger.js'
+import { postTransaction, getBalance, userAccount, withTransaction } from './ledger.js'
 import { areFriends } from './friends.js'
 
 export const LOAN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
@@ -2198,20 +2217,25 @@ export function createLoan(
   if (getBalance(db, userAccount(lender)) < amount) throw new Error('债权人余额不足')
 
   const id = randomUUID()
-  db.prepare(
-    `INSERT INTO loans (id, lender, borrower, principal, repaid, status, created_at)
-     VALUES (?,?,?,?,0,'open',?)`,
-  ).run(id, lender, borrower, amount, now)
 
-  postTransaction(
-    db,
-    [
-      { account: userAccount(lender), delta: -amount },
-      { account: userAccount(borrower), delta: amount },
-    ],
-    'loan_create',
-    id,
-  )
+  // 借条行与账本过账必须原子：否则崩溃窗口会留下与账本对不上的借条，
+  // 而全局零和校验查不出这种不一致（账本本身仍是平的）。
+  withTransaction(db, () => {
+    db.prepare(
+      `INSERT INTO loans (id, lender, borrower, principal, repaid, status, created_at)
+       VALUES (?,?,?,?,0,'open',?)`,
+    ).run(id, lender, borrower, amount, now)
+
+    postTransaction(
+      db,
+      [
+        { account: userAccount(lender), delta: -amount },
+        { account: userAccount(borrower), delta: amount },
+      ],
+      'loan_create',
+      id,
+    )
+  })
 
   return toLoan(
     db.prepare('SELECT * FROM loans WHERE id = ?').get(id) as LoanRow,
@@ -2237,18 +2261,20 @@ export function repayLoan(
   const repaid = row.repaid + amount
   const status = repaid >= row.principal ? 'settled' : 'open'
 
-  db.prepare('UPDATE loans SET repaid = ?, status = ?, settled_at = ? WHERE id = ?')
-    .run(repaid, status, status === 'settled' ? Date.now() : null, loanId)
+  withTransaction(db, () => {
+    db.prepare('UPDATE loans SET repaid = ?, status = ?, settled_at = ? WHERE id = ?')
+      .run(repaid, status, status === 'settled' ? Date.now() : null, loanId)
 
-  postTransaction(
-    db,
-    [
-      { account: userAccount(row.borrower), delta: -amount },
-      { account: userAccount(row.lender), delta: amount },
-    ],
-    'loan_repay',
-    loanId,
-  )
+    postTransaction(
+      db,
+      [
+        { account: userAccount(row.borrower), delta: -amount },
+        { account: userAccount(row.lender), delta: amount },
+      ],
+      'loan_repay',
+      loanId,
+    )
+  })
 
   return toLoan(db.prepare('SELECT * FROM loans WHERE id = ?').get(loanId) as LoanRow)
 }
@@ -3129,7 +3155,7 @@ import { randomUUID, randomInt } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { assertZeroSum, type GameEvent, type SeatInfo } from '@cardgame/shared'
 import { getEngine } from './registry.js'
-import { postTransaction, userAccount } from '../domain/ledger.js'
+import { postTransaction, userAccount, withTransaction } from '../domain/ledger.js'
 import { autoRepay } from '../domain/loans.js'
 
 interface Seat {
@@ -3296,27 +3322,31 @@ export function settleToLedger(db: DatabaseSync, record: SettlementRecord): void
     .filter(([, delta]) => delta !== 0)
     .map(([userId, delta]) => ({ account: userAccount(userId), delta }))
 
-  if (lines.length > 0) {
-    postTransaction(db, lines, 'game_settle', record.roomId)
-  }
+  // 过账、战绩、自动还款必须是一个原子单元：任何一步单独生效都会让
+  // 账本、借条与战绩三者互相对不上，而全局零和校验查不出这种不一致。
+  withTransaction(db, () => {
+    if (lines.length > 0) {
+      postTransaction(db, lines, 'game_settle', record.roomId)
+    }
 
-  db.prepare(
-    `INSERT INTO match_records (id, room_id, game_id, seed, players, actions, deltas, created_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
-  ).run(
-    randomUUID(),
-    record.roomId,
-    record.gameId,
-    record.seed,
-    JSON.stringify(record.players),
-    JSON.stringify(record.actions),
-    JSON.stringify(record.deltas),
-    Date.now(),
-  )
+    db.prepare(
+      `INSERT INTO match_records (id, room_id, game_id, seed, players, actions, deltas, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run(
+      randomUUID(),
+      record.roomId,
+      record.gameId,
+      record.seed,
+      JSON.stringify(record.players),
+      JSON.stringify(record.actions),
+      JSON.stringify(record.deltas),
+      Date.now(),
+    )
 
-  for (const [userId, delta] of Object.entries(record.deltas)) {
-    if (delta > 0) autoRepay(db, userId)
-  }
+    for (const [userId, delta] of Object.entries(record.deltas)) {
+      if (delta > 0) autoRepay(db, userId)
+    }
+  })
 }
 
 export class RoomManager {
