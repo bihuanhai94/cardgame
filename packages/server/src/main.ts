@@ -1,17 +1,28 @@
 import { openDb } from './db/open.js'
-import { RoomManager } from './room/room.js'
 import { buildApp } from './http/routes.js'
+import { RoomManager } from './room/room.js'
+import { registerEngine } from './room/registry.js'
+import { highCard } from './games/highcard.js'
+import { attachGateway } from './ws/gateway.js'
+import { checkGlobalInvariant } from './domain/ledger.js'
 
-const PORT = parseInt(process.env.PORT || '3000', 10)
-const db = openDb(process.env.DATABASE_URL || './cardgame.db')
+const DB_PATH = process.env.CARDGAME_DB ?? '/opt/cardgame/data/cardgame.db'
+const PORT = Number(process.env.PORT ?? 3100)
+const HOST = process.env.HOST ?? '127.0.0.1'
+
+const db = openDb(DB_PATH)
+
+const invariant = checkGlobalInvariant(db)
+if (!invariant.ok) {
+  console.error(`账本零和不变量被破坏，总和为 ${invariant.total}，拒绝启动`)
+  process.exit(1)
+}
+
+registerEngine(highCard)
+
 const rooms = new RoomManager()
-
 const app = buildApp({ db, rooms })
 
-app.listen({ port: PORT, host: '0.0.0.0' }, (err, addr) => {
-  if (err) {
-    console.error(err)
-    process.exit(1)
-  }
-  console.log(`Server listening on ${addr}`)
-})
+await app.listen({ port: PORT, host: HOST })
+attachGateway(app.server, { db, rooms })
+console.log(`cardgame 已启动：http://${HOST}:${PORT}`)
