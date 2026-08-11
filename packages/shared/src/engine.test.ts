@@ -11,7 +11,7 @@ const counter: Engine<CounterState, CounterAction> = {
     scores: Object.fromEntries(ctx.players.map((p) => [p, 0])),
     over: false,
   }),
-  legalActions: () => [{ type: 'add', n: 1 }, { type: 'stop' }],
+  legalActions: (state) => (state.over ? [] : [{ type: 'add', n: 1 }, { type: 'stop' }]),
   isLegal: (state, _playerId, action) =>
     !state.over && (action.type === 'add' || action.type === 'stop'),
   apply: (state, playerId, action) => {

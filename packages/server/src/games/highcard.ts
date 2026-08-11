@@ -45,9 +45,8 @@ export const highCard: Engine<HighCardState, HighCardAction> = {
   },
 
   legalActions(state, playerId) {
-    if (!state.players.includes(playerId)) return []
-    if (state.folded.includes(playerId) || state.acted.includes(playerId)) return []
-    return [{ type: 'call' }, { type: 'fold' }]
+    const all: HighCardAction[] = [{ type: 'call' }, { type: 'fold' }]
+    return all.filter((a) => highCard.isLegal(state, playerId, a))
   },
 
   isLegal(state, playerId, action) {
