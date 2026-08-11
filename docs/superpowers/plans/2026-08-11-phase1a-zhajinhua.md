@@ -1287,6 +1287,59 @@ git commit -m "fix(server): 房间选项校验，拒绝负数/小数底注与非
 
 ---
 
+### Task 13: 真实筹码约束（根因修复）
+
+**背景：** Task 10 的实现者发现三个 AI 会互相加注到死锁，并在 AI 层加了安全阀。控制器实测确认**根因不在 AI**：两个人类玩家同样可以无限加注——200 次加注后 `round` 仍为 0、牌局毫无推进、注额涨到 20100。
+
+原因有两层：
+
+1. **封顶数的是「已完成的轮数」，而加注战让轮永远完不成。** 这与 Task 4 修掉的死锁是同一形状：封顶挡住的动作，不是让牌局卡住的那个动作。
+2. **座位筹码是 `UNLIMITED_STACK = Number.MAX_SAFE_INTEGER`**（引擎从 Task 4 起就是如此）。真实牌桌上加注战会自然终止，因为总有人先没钱；无限筹码抹掉了这个天然边界。
+
+这同时也是一直挂在待办上的另一个问题：**玩家可以承诺超过自己实际余额的金额**，结算时账本会记出他还不起的债。
+
+**Files:**
+- Modify: `packages/server/src/games/zhajinhua.ts`（`init` 接受每人初始筹码）
+- Modify: `packages/server/src/room/room.ts`（开局时把真实余额喂给引擎）
+- Modify: `packages/server/src/ws/gateway.ts`（开局前读取各玩家余额）
+- Test: `packages/server/src/games/zhajinhua.test.ts`、`room.test.ts`
+
+**Interfaces:**
+- Produces: `EngineContext.options.stacks?: Record<string, number>`；缺省时沿用当前行为以免破坏既有测试
+
+- [ ] **Step 1: 写失败测试**
+
+```
+- 传入 stacks 后，玩家加注不得超过自己的筹码
+- 筹码耗尽的玩家变为 allin，不再被要求行动
+- 双人加注战在筹码耗尽时必然终止（断言有限步内 over）
+- 未传 stacks 时行为与现在一致（既有测试不受影响）
+- 结算后没有玩家的 contributed 超过其初始筹码
+```
+
+- [ ] **Step 2: 确认失败** → `pnpm test`
+
+- [ ] **Step 3: 实现**
+
+`init` 读取 `ctx.options.stacks`，按玩家 id 设置座位筹码；缺省回落到当前的 `UNLIMITED_STACK`。房间在 `start()` 时从账本取各在座玩家的当前余额传入。
+
+**注意**：这会让 `betting/round.ts` 既有的 allin 分支第一次真正生效——那段逻辑写好了但至今从未被触发过，需要重点验证。
+
+- [ ] **Step 4: 确认通过并跑 fuzz** → `pnpm test` ×3；`pnpm fuzz zhajinhua 50000`
+
+- [ ] **Step 5: 复核 AI 安全阀**
+
+真实筹码到位后，Task 10 的 `MAX_RAISE_MULT` 安全阀可能已成冗余。**先不要删**——先确认加注战确实会因筹码耗尽而终止，再判断安全阀是保留为纵深防御还是移除。在报告中说明结论。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add -A
+git commit -m "fix(games): 引擎接受真实筹码，加注战因筹码耗尽而终止"
+```
+
+---
+
 ## 完成标准
 
 1. `pnpm test` 全绿；`npx tsc -b` 零错误
@@ -1295,7 +1348,8 @@ git commit -m "fix(server): 房间选项校验，拒绝负数/小数底注与非
 4. 端到端脚本跑通一局含比牌的炸金花，净资产守恒、账本零和成立
 5. 真机验证清单人工确认通过
 6. 0 期已有的 241 个测试全部仍通过
-7. 房间选项校验到位：负数/小数底注与 `maxRounds < 1` 均在建房时被拒，且不留下孤儿房间
+7. 玩家不能承诺超过自身余额的金额；加注战因筹码耗尽而必然终止
+8. 房间选项校验到位：负数/小数底注与 `maxRounds < 1` 均在建房时被拒，且不留下孤儿房间
 
 ## 下一步
 
