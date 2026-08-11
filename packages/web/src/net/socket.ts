@@ -35,11 +35,15 @@ export class GameSocket {
       const msg = JSON.parse(String((e as { data: string }).data)) as ServerMessage
       if (msg.t === 'authOk') {
         this.authed = true
-        if (this.currentRoomId && this.queue.length === 0) {
-          this.rawSend({ t: 'join', roomId: this.currentRoomId })
-        }
         const pending = this.queue
         this.queue = []
+        // 重连后必须重新入房（服务端的房间归属是每连接的）。
+        // 但若队列里已有 join，就不要再补发一条 —— 按队列是否为空来判断是错的：
+        // 掉线期间任何一条 action 入队都会让补发被跳过，人就被留在房间外面了。
+        const queuedJoin = pending.some((m) => m.t === 'join')
+        if (this.currentRoomId && !queuedJoin) {
+          this.rawSend({ t: 'join', roomId: this.currentRoomId })
+        }
         for (const m of pending) this.rawSend(m)
       }
       this.opts.onMessage(msg)
@@ -55,7 +59,11 @@ export class GameSocket {
   }
 
   private rawSend(msg: ClientMessage): void {
-    this.ws?.send(JSON.stringify(msg))
+    // 防御性检查：真实 WebSocket 在 CLOSING/CLOSED 状态下 send() 会抛异常；
+    // OPEN === 1，直接用数值常量以避免依赖全局 WebSocket（测试用 FakeWs 无此静态属性）。
+    if (this.ws && this.ws.readyState === 1) {
+      this.ws.send(JSON.stringify(msg))
+    }
   }
 
   send(msg: ClientMessage): void {

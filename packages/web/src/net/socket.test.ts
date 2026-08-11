@@ -92,6 +92,24 @@ describe('GameSocket', () => {
     vi.useRealTimers()
   })
 
+  it('掉线期间排队的 action 不应压制重连后的补发 join', async () => {
+    vi.useFakeTimers()
+    const { s, last } = make()
+    last().open()
+    last().emit({ t: 'authOk', userId: 'u1' })
+    s.send({ t: 'join', roomId: '654321' })
+    last().close()
+    // 掉线期间用户操作，进入队列
+    s.send({ t: 'action', action: { type: 'call' } })
+    await vi.advanceTimersByTimeAsync(1000)
+    const fresh = last()
+    fresh.open()
+    fresh.emit({ t: 'authOk', userId: 'u1' })
+    const types = fresh.sent.map((x) => JSON.parse(x).t)
+    expect(types).toEqual(['auth', 'join', 'action'])
+    vi.useRealTimers()
+  })
+
   it('主动 close 后不再重连', async () => {
     vi.useFakeTimers()
     const { s, last } = make()

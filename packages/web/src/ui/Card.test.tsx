@@ -37,6 +37,11 @@ describe('CardView', () => {
     expect(container.textContent).toContain('王')
   })
 
+  it('小王（rank 15）同样显示王字', () => {
+    const { container } = render(<CardView card={{ suit: 'j', rank: 15 }} />)
+    expect(container.textContent).toContain('王')
+  })
+
   it('card 为 null 时渲染牌背且不含任何点数', () => {
     const { container } = render(<CardView card={null} />)
     expect(container.querySelector('svg')).toBeTruthy()
