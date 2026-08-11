@@ -1148,6 +1148,8 @@ git commit -m "feat(web): 炸金花牌桌页面"
 - Test: `packages/server/src/ai/zhajinhua.test.ts`
 - Test: `packages/server/src/room/room.test.ts`（追加托管测试）
 
+**新增职责（来自 Task 9 的移交）：** 20 秒倒计时与超时自动出牌一并在本任务实现。Task 9 刻意没做，因为客户端单独倒计时而服务端不会代打，只会让玩家看着数字归零然后什么都不发生。计时策略与 `Room.autoAct` 必须同时落地。
+
 **Interfaces:**
 - Produces:
   - `function decideZjh(view: unknown, playerId: string, opts): ZjhAction` — 纯函数，输入是**裁剪后的视图**（AI 不得看到他人手牌）
