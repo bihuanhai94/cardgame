@@ -16,6 +16,8 @@ export interface ZjhState {
   round: number
   bet: RoundState
   pot: number
+  /** 每人迄今投入总额（含底注），pot 恒等于其总和。settle 直接读取，不再从 bet.committed 反推。 */
+  contributed: Record<string, number>
   compares: Array<{ from: string; to: string; winner: string }>
   over: boolean
   winner: string | null
@@ -40,12 +42,25 @@ function committedOf(bet: RoundState, id: string): number {
   return bet.seats.find((s) => s.id === id)?.committed ?? 0
 }
 
+function addContribution(state: ZjhState, playerId: string, paid: number): Record<string, number> {
+  return { ...state.contributed, [playerId]: (state.contributed[playerId] ?? 0) + paid }
+}
+
 /**
- * 一次下注动作（call/raise/比牌的扣款）落定后，统一处理：
+ * 一轮（orbit）：每个在局玩家把明注按各自 stakeFactor 缴一遍。
+ * 一轮结束（RoundState.over）时，若仍有 ≥2 人在局，把每个存活玩家的
+ * `committed` 清零后用同一个 currentBet 重新开轮——这样下一轮才会真的再收一次钱，
+ * 而不是让所有人的跟注额永远停在 0（那样池子会冻结、封顶轮数只是空转）。
+ */
+function reopenOrbit(bet: RoundState): RoundState {
+  const resetSeats = bet.seats.map((s) => (s.folded ? s : { ...s, committed: 0 }))
+  return startRound(resetSeats, bet.turn, bet.currentBet, bet.minRaise)
+}
+
+/**
+ * 一次下注/比牌动作落定后统一处理：
  * 1. 只剩一人时结束本局；
- * 2. 若本轮下注（RoundState）已结束但仍有多人在局，开启下一轮（round+1），
- *    让尚未加注的玩家仍可继续行动（跟注/比牌），直到有人加注、弃牌到只剩一人、
- *    或达到封顶后被迫收场。
+ * 2. 若本轮（RoundState）已结束但仍有多人在局，`round += 1` 并开启下一轮。
  */
 function afterBet(state: ZjhState, bet: RoundState, folded: string[]): ZjhState {
   const alive = state.players.filter((p) => !folded.includes(p))
@@ -53,8 +68,7 @@ function afterBet(state: ZjhState, bet: RoundState, folded: string[]): ZjhState 
     return { ...state, bet, folded, over: true, winner: alive[0] ?? null }
   }
   if (bet.over) {
-    const restarted = startRound(bet.seats, bet.turn, bet.currentBet, bet.minRaise)
-    return { ...state, bet: restarted, folded, round: state.round + 1 }
+    return { ...state, bet: reopenOrbit(bet), folded, round: state.round + 1 }
   }
   return { ...state, bet, folded }
 }
@@ -74,6 +88,8 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
       id, stack: UNLIMITED_STACK, committed: 0, folded: false, allin: false, stakeFactor: 0.5,
     }))
     const bet = startRound(seats, 0, ante, ante)
+    const contributed: Record<string, number> = {}
+    for (const p of ctx.players) contributed[p] = ante
     return {
       players: [...ctx.players],
       ante,
@@ -84,6 +100,7 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
       round: 0,
       bet,
       pot: ante * ctx.players.length,
+      contributed,
       compares: [],
       over: false,
       winner: null,
@@ -115,7 +132,10 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
       case 'look':
         return !state.looked.includes(playerId)
       case 'fold':
+        return isLegalBet(state.bet, playerId, action)
       case 'call':
+        // 封顶后不再允许跟注：只能比牌或弃牌，逼迫手牌收场。
+        if (state.round >= state.maxRounds) return false
         return isLegalBet(state.bet, playerId, action)
       case 'raise':
         if (state.round >= state.maxRounds) return false
@@ -154,16 +174,21 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
       const paid = committedOf(newBet, playerId) - committedOf(state.bet, playerId)
       const next = afterBet(state, newBet, folded)
       return {
-        state: { ...next, pot: state.pot + paid },
+        state: { ...next, pot: state.pot + paid, contributed: addContribution(state, playerId, paid) },
         events: [{ type: action.type, payload: { playerId } }],
       }
     }
 
-    // compare
+    // compare：发起方需支付与当前明注相等的注额——不是「补到当前明注」的差额，
+    // 是每次发起都要重新付一次全额，因此不能借用 applyBet 的 call 语义（那是按
+    // toCall 补差额，若本轮已缴满会算出 0，等于比牌免费）。发起方能比牌就意味着
+    // 已看牌、stakeFactor 恒为 1，不涉及折算，直接加算明注即可。
     const { targetId } = action
-    const payBefore = committedOf(state.bet, playerId)
-    const paidBet = applyBet(state.bet, playerId, { type: 'call' })
-    const paid = committedOf(paidBet, playerId) - payBefore
+    const pay = state.bet.currentBet
+    const paidBet: RoundState = {
+      ...state.bet,
+      seats: state.bet.seats.map((s) => (s.id === playerId ? { ...s, committed: s.committed + pay } : s)),
+    }
 
     const challengerEval = evalThree(state.hands[playerId]!)
     const targetEval = evalThree(state.hands[targetId]!)
@@ -172,11 +197,13 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
     const winnerId = cmp > 0 ? playerId : targetId
     const loserId = winnerId === playerId ? targetId : playerId
 
+    // 比牌是发起方的一次完整行动，无论谁输，行动权都要交给下一位——
+    // nextTurn 会自动跳过刚被标记 folded 的输家，不必按输家是谁分两种情况处理。
     let bet: RoundState = {
       ...paidBet,
       seats: paidBet.seats.map((s) => (s.id === loserId ? { ...s, folded: true } : s)),
     }
-    if (bet.seats[bet.turn]?.id === loserId) bet = nextTurn(bet)
+    bet = nextTurn(bet)
     bet = { ...bet, over: isRoundOver(bet) }
 
     const folded = [...state.folded, loserId]
@@ -185,7 +212,8 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
     return {
       state: {
         ...next,
-        pot: state.pot + paid,
+        pot: state.pot + pay,
+        contributed: addContribution(state, playerId, pay),
         compares: [...state.compares, { from: playerId, to: targetId, winner: winnerId }],
       },
       events: [{ type: 'compared', payload: { from: playerId, to: targetId, winner: winnerId } }],
@@ -199,18 +227,20 @@ export const zhajinhua: Engine<ZjhState, ZjhAction> = {
   settle(state): Settlement {
     const deltas: Record<string, number> = {}
     const alive = state.players.filter((p) => !state.folded.includes(p))
-    const contribution = (p: string) => state.ante + committedOf(state.bet, p)
 
     if (alive.length === 0) {
       for (const p of state.players) deltas[p] = 0
       return { deltas }
     }
 
+    // 封顶后只剩「比牌或弃牌」两种动作，每次比牌都会淘汰一人，
+    // 所以最后的存活者必然是历次比牌里一路胜出的那个——不需要在这里
+    // 重新比一次牌，alive[0] 就是真正的赢家（by construction）。
     const winner = alive[0]!
     for (const p of state.players) {
-      deltas[p] = p === winner ? 0 : -contribution(p)
+      deltas[p] = p === winner ? 0 : -(state.contributed[p] ?? 0)
     }
-    deltas[winner] = state.pot - contribution(winner)
+    deltas[winner] = state.pot - (state.contributed[winner] ?? 0)
     return { deltas }
   },
 
