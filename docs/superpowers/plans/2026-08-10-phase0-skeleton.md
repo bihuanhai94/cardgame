@@ -692,6 +692,7 @@ git commit -m "feat(shared): 引擎契约与通信协议类型"
 **Files:**
 - Create: `packages/server/package.json`
 - Create: `packages/server/tsconfig.json`
+- Modify: `vitest.workspace.ts`（补回 `server` 项目项）
 - Create: `packages/server/src/db/migrations.ts`
 - Create: `packages/server/src/db/open.ts`
 - Test: `packages/server/src/db/open.test.ts`
@@ -749,6 +750,19 @@ describe('openTestDb', () => {
 ```
 
 - [ ] **Step 2: 创建 server 包配置**
+
+Task 1 创建 `vitest.workspace.ts` 时，因为 `packages/server` 尚不存在，只放了 `shared` 一项。现在把 `server` 项目项补回去，插在 `shared` 之后：
+
+```ts
+  {
+    test: {
+      name: 'server',
+      root: './packages/server',
+      environment: 'node',
+    },
+  },
+```
+
 
 `packages/server/package.json`：
 
