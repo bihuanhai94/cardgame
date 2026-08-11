@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
 import { createRef } from 'react'
 import { breakdown, chipPlacement } from './denoms.js'
@@ -22,13 +22,17 @@ describe('breakdown', () => {
 })
 
 describe('chipPlacement', () => {
-  it('落点只依赖序号，不依赖池子总数（同一序号在不同 cap 下位置一致）', () => {
-    const opts1 = { w: 20, cap: 46, boxW: 190 }
-    const opts2 = { w: 20, cap: 46, boxW: 190 }
-    // 同一 opts 下，第 3 枚的落点在池子只有 4 枚还是 40 枚时必须相同——
-    // 因为该函数本身不接收"当前总数"，只接收自身序号 i。
-    const p1 = chipPlacement(3, opts1)
-    const p2 = chipPlacement(3, opts2)
+  it('同一序号、同一（固定）配置下调用两次结果一致（函数是纯函数，无隐藏状态）', () => {
+    // 注意：cap 与 boxW 是"这个堆的固定配置"，不是"当前已有筹码数"——
+    // chipPlacement 的公式本身用到 cap/boxW 来算半径缩放（r = R·sqrt((i+0.5)/cap)），
+    // 所以改变 cap 或 boxW 会合法地改变落点（已用脚本验证：cap 从 46 改到 100，
+    // 或 boxW 从 190 改到 250，同一 i=3 的 x/y 都会变）。真正要验证的"不依赖
+    // 池子总数"指的是：函数签名里根本没有"当前已有多少枚筹码"这个输入——
+    // 这条测试只证明纯函数无隐藏状态；对"新增筹码不会挤动已有筹码位置"
+    // 这一实际约束的验证见下面 ChipHeap 的集成测试。
+    const opts = { w: 20, cap: 46, boxW: 190 }
+    const p1 = chipPlacement(3, opts)
+    const p2 = chipPlacement(3, opts)
     expect(p1).toEqual(p2)
   })
 })
@@ -89,6 +93,25 @@ describe('ChipHeap', () => {
     }
   })
 
+  it('已落地筹码的位置（left/top）在池子继续增大后保持不变（约束 4 的实际表现）', () => {
+    const ref = createRef<ChipHeapHandle>()
+    const { container } = render(<ChipHeap ref={ref} boxW={190} boxH={88} cap={46} />)
+    const heapEl = container.querySelector('.heap')!
+
+    ref.current!.add(breakdown(500, 24)) // 少量筹码
+    const earlyNodes = Array.from(heapEl.children) as HTMLDivElement[]
+    const earlySnapshot = earlyNodes.map((n) => ({ left: n.style.left, top: n.style.top }))
+
+    ref.current!.add(breakdown(8000, 24)) // 池子总数大幅增长
+
+    // 之前那批筹码的 left/top 必须和刚落地时完全一样——
+    // 如果落点依赖了"当前总数"而不是只依赖自身序号，这里就会漂移。
+    earlyNodes.forEach((n, idx) => {
+      expect(n.style.left).toBe(earlySnapshot[idx]!.left)
+      expect(n.style.top).toBe(earlySnapshot[idx]!.top)
+    })
+  })
+
   it('clear 清空堆', () => {
     const ref = createRef<ChipHeapHandle>()
     const { container } = render(<ChipHeap ref={ref} boxW={190} boxH={88} />)
@@ -129,26 +152,47 @@ describe('flyChips', () => {
     to.remove()
   })
 
-  it('可以在 jsdom 零尺寸布局下运行，并通过注入 measure 得到确定坐标', async () => {
-    const from = document.createElement('div')
-    const to = document.createElement('div')
-    document.body.appendChild(from)
-    document.body.appendChild(to)
+  it('注入确定的 measure/random 时，飞行元素的 transform 必须等于该坐标下唯一正确的位移', async () => {
+    vi.useFakeTimers()
+    try {
+      const from = document.createElement('div')
+      const to = document.createElement('div')
+      document.body.appendChild(from)
+      document.body.appendChild(to)
 
-    const rects = new Map<Element, { left: number; top: number; width: number; height: number }>([
-      [from, { left: 0, top: 0, width: 40, height: 12 }],
-      [to, { left: 200, top: 100, width: 40, height: 12 }],
-    ])
+      const rects = new Map<Element, { left: number; top: number; width: number; height: number }>([
+        [from, { left: 0, top: 0, width: 40, height: 12 }],
+        [to, { left: 200, top: 100, width: 40, height: 12 }],
+      ])
 
-    const flown = await flyChips(from, to, 100, {
-      dur: 5,
-      stagger: 1,
-      measure: (el) => rects.get(el)!,
-      random: () => 0.5, // 去掉随机抖动，坐标可预测
-    })
-    expect(flown.length).toBeGreaterThan(0)
+      const promise = flyChips(from, to, 100, {
+        count: 5,
+        dur: 200,
+        stagger: 1,
+        w: 20,
+        measure: (el) => rects.get(el)!,
+        random: () => 0.5, // 去掉随机抖动 → jx=jy=0，位移可预测
+      })
 
-    from.remove()
-    to.remove()
+      // vitest 的 fake timers 也接管了 requestAnimationFrame，它按帧（约 16ms）触发，
+      // 不是在 0ms——推进一帧，让 transform 真正被写入 style。
+      await vi.advanceTimersByTimeAsync(16)
+
+      const flyer = document.querySelector<HTMLDivElement>('.flyer')
+      expect(flyer).toBeTruthy()
+      // 期望值是手算出来的常量，不是用实现里同一套表达式再算一遍——
+      // dx = (200 + 40/2 - 20/2) - (0 + 40/2 - 20/2) = 210 - 10 = 200
+      // dy = (100 + 12/2)        - (0 + 12/2)        = 106 - 6   = 100
+      expect(flyer!.style.transform).toBe('translate(200px, 100px)')
+
+      // 推进到全部飞完，让 promise 真正 resolve，避免挂起的定时器影响后续用例。
+      await vi.advanceTimersByTimeAsync(2000)
+      await promise
+
+      from.remove()
+      to.remove()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
