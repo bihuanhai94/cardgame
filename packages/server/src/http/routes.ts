@@ -11,7 +11,6 @@ import { createLoan, repayLoan, listLoans, netWorth } from '../domain/loans.js'
 import { claimDaily, ranking } from '../domain/ranking.js'
 import { getEngine } from '../room/registry.js'
 import type { RoomManager } from '../room/room.js'
-import { validateZjhOptions } from '../games/zhajinhua.js'
 
 export interface Deps {
   db: DatabaseSync
@@ -145,11 +144,11 @@ export function buildApp(deps: Deps): FastifyInstance {
       seats: number
       options: Record<string, unknown>
     }
-    getEngine(gameId) // 未注册则抛错，交给错误处理器转 400
-    // 与引擎 init 共用同一份校验：非法 options（负数/小数底注、非法封顶轮数）
-    // 必须在任何状态（RoomManager 里的房间、rooms 表里的行）被创建之前拒绝，
-    // 否则会留下孤儿房间。
-    if (gameId === 'zhajinhua') validateZjhOptions(options ?? {})
+    const engine = getEngine(gameId) // 未注册则抛错，交给错误处理器转 400
+    // 通过引擎契约的可选钩子校验 options：路由层不认识任何具体玩法，
+    // 只认识 Engine 接口，因此新增玩法无需改动这里。必须在任何状态
+    // （RoomManager 里的房间、rooms 表里的行）被创建之前拒绝，否则会留下孤儿房间。
+    engine.validateOptions?.(options ?? {})
     const room = rooms.create({ gameId, ownerId: user.id, seats, options: options ?? {} })
     db.prepare('INSERT INTO rooms (id, game_id, owner_id, options, created_at) VALUES (?,?,?,?,?)')
       .run(room.id, gameId, user.id, JSON.stringify(options ?? {}), Date.now())

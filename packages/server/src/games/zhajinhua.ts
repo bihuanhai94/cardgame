@@ -94,6 +94,10 @@ function afterBet(state: ZjhState, bet: RoundState, folded: string[]): ZjhState 
 export const zhajinhua: Engine<ZjhState, ZjhAction> = {
   id: 'zhajinhua',
 
+  validateOptions(options: Record<string, unknown>): void {
+    validateZjhOptions(options)
+  },
+
   init(ctx: EngineContext): ZjhState {
     const { ante, maxRounds } = validateZjhOptions(ctx.options)
     const deck = shuffle(createDeck(), createRng(ctx.seed))

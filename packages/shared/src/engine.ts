@@ -36,6 +36,12 @@ export interface Engine<S, A> {
    */
   isLegal(state: S, playerId: string, action: A): boolean
   apply(state: S, playerId: string, action: A): ApplyResult<S>
+  /**
+   * 校验建房选项。由传输层在创建任何状态之前调用，使非法请求不留下痕迹。
+   * 可选：没有可校验选项的玩法不必实现。
+   * 引擎自己的 init 仍须独立校验 —— 这里是前置拦截，不是唯一防线。
+   */
+  validateOptions?(options: Record<string, unknown>): void
   isOver(state: S): boolean
   settle(state: S): Settlement
   /** viewerId 为 null 表示观战者。返回值不得包含任何他人暗牌。 */
