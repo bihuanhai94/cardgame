@@ -220,29 +220,47 @@ describe('autoRepay', () => {
 })
 
 describe('transaction atomicity', () => {
-  it('借条与账本过账必须原子：失败后两个表都无变化', () => {
+  it('createLoan 内部过账失败时不留下借条行', () => {
     const { db, a, b } = setup()
-    const beforeLoanCount = (db.prepare('SELECT COUNT(*) as cnt FROM loans').get() as { cnt: number }).cnt
-    const beforeEntryCount = (db.prepare('SELECT COUNT(*) as cnt FROM ledger_entries').get() as { cnt: number }).cnt
+    const loansBefore = (db.prepare('SELECT COUNT(*) AS n FROM loans').get() as { n: number }).n
+    const entriesBefore = (db.prepare('SELECT COUNT(*) AS n FROM ledger_entries').get() as { n: number }).n
 
-    // Try to create a loan but force failure after the loan row insert
+    // 让借条过账在借条行写入之后失败
+    db.exec(`CREATE TRIGGER fail_loan_post BEFORE INSERT ON ledger_entries
+             WHEN NEW.reason = 'loan_create'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+
     try {
-      withTransaction(db, () => {
-        createLoan(db, a.id, b.id, 1000, OLD)
-        throw new Error('simulated crash after loan insert')
-      })
-    } catch (e) {
-      // Expect the error we threw
-      expect((e as Error).message).toBe('simulated crash after loan insert')
+      expect(() => createLoan(db, a.id, b.id, 1000, OLD)).toThrow()
+    } finally {
+      db.exec('DROP TRIGGER fail_loan_post')
     }
 
-    // Both tables should be unchanged
-    const afterLoanCount = (db.prepare('SELECT COUNT(*) as cnt FROM loans').get() as { cnt: number }).cnt
-    const afterEntryCount = (db.prepare('SELECT COUNT(*) as cnt FROM ledger_entries').get() as { cnt: number }).cnt
-    expect(afterLoanCount).toBe(beforeLoanCount)
-    expect(afterEntryCount).toBe(beforeEntryCount)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM loans').get() as { n: number }).n).toBe(loansBefore)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM ledger_entries').get() as { n: number }).n).toBe(entriesBefore)
+    expect(checkGlobalInvariant(db).ok).toBe(true)
+  })
 
-    // Ledger still balances
+  it('repayLoan 内部过账失败时不更新借条', () => {
+    const { db, a, b } = setup()
+    const loan = createLoan(db, a.id, b.id, 1000, OLD)
+    const repaidBefore = loan.repaid
+    const entriesBefore = (db.prepare('SELECT COUNT(*) AS n FROM ledger_entries').get() as { n: number }).n
+
+    // 让还款过账失败
+    db.exec(`CREATE TRIGGER fail_loan_repay BEFORE INSERT ON ledger_entries
+             WHEN NEW.reason = 'loan_repay'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+
+    try {
+      expect(() => repayLoan(db, loan.id, b.id, 100)).toThrow()
+    } finally {
+      db.exec('DROP TRIGGER fail_loan_repay')
+    }
+
+    const loanAfter = db.prepare('SELECT * FROM loans WHERE id = ?').get(loan.id) as any
+    expect(loanAfter.repaid).toBe(repaidBefore)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM ledger_entries').get() as { n: number }).n).toBe(entriesBefore)
     expect(checkGlobalInvariant(db).ok).toBe(true)
   })
 })
